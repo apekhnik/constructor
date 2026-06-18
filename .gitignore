@@ -1,13 +1,10 @@
-# In this repo only the `app/` folder is versioned.
-# Everything else at the workspace root stays local-only.
-
-# Workspace docs and design references
+# Local-only workspace docs and design references
 CLAUDE.md
-README.md
 support.js
 *.dc.html
 _bundle/
 _check/
+.thumbnail
 
 # Dependencies and build output
 node_modules/
@@ -33,7 +30,6 @@ lerna-debug.log*
 
 # OS
 .DS_Store
-.thumbnail
 Thumbs.db
 
 # Editors / IDEs
