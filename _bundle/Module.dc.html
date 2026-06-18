@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap&subset=cyrillic,cyrillic-ext,latin" rel="stylesheet">
+<style>
+  @keyframes ledpulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes faultpulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+</style>
+</helmet>
+
+<div style="{{ rootStyle }}">
+
+  <!-- top cap with terminal slot + screw -->
+  <div style="position:absolute;top:0;left:0;right:0;height:14px;background:linear-gradient(180deg,#ece6d6 0%,#d6cfbd 60%,#bdb6a3 100%);border-bottom:1px solid rgba(0,0,0,.18);box-shadow:inset 0 -1px 0 rgba(255,255,255,.4);">
+    <div style="position:absolute;top:3px;left:50%;transform:translateX(-50%);width:{{ terminalWidth }}px;height:5px;background:#16130f;border-radius:1px;box-shadow:inset 0 1px 1px rgba(0,0,0,.6);"></div>
+    <sc-for list="{{ poleScrews }}" as="s" hint-placeholder-count="1">
+      <div style="position:absolute;top:9px;left:{{ s.x }}px;width:4px;height:4px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#9a9384 0%,#4a4538 80%);"></div>
+    </sc-for>
+  </div>
+
+  <!-- top label strip (rating like 16A) -->
+  <div style="position:absolute;top:16px;left:0;right:0;height:14px;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:600;color:#1c1814;letter-spacing:.05em;line-height:1;">{{ topLabelText }}</div>
+
+  <!-- main body with subtle plastic gradient -->
+  <div style="position:absolute;top:30px;left:0;right:0;bottom:30px;background:linear-gradient(180deg,#dfd9c8 0%,#cdc6b3 35%,#bcb59f 65%,#d2cbb7 100%);border-top:1px solid rgba(255,255,255,.25);border-bottom:1px solid rgba(0,0,0,.12);">
+
+    <!-- subtle vertical mold seam per pole -->
+    <sc-for list="{{ moldSeams }}" as="m" hint-placeholder-count="1">
+      <div style="position:absolute;top:0;bottom:0;left:{{ m.x }}px;width:1px;background:rgba(0,0,0,.08);"></div>
+    </sc-for>
+
+    <!-- LEVERS (one per pole) -->
+    <sc-for list="{{ levers }}" as="lv" hint-placeholder-count="1">
+      <div style="position:absolute;top:{{ lv.top }}px;left:{{ lv.x }}px;width:{{ lv.w }}px;height:26px;background:linear-gradient(180deg,#2a2520 0%,#0f0c09 70%,#1a1612 100%);border-radius:2px 2px 1px 1px;box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 2px 3px rgba(0,0,0,.35);">
+        <div style="position:absolute;top:3px;left:50%;transform:translateX(-50%);width:{{ lv.notchW }}px;height:2px;background:#0a0806;border-radius:1px;"></div>
+        <div style="position:absolute;bottom:3px;left:0;right:0;text-align:center;font-family:'JetBrains Mono',monospace;font-size:6px;color:{{ lv.textColor }};letter-spacing:.05em;line-height:1;">{{ lv.text }}</div>
+      </div>
+    </sc-for>
+
+    <!-- I / O markings around lever -->
+    <sc-for list="{{ ioMarks }}" as="io" hint-placeholder-count="1">
+      <div style="position:absolute;top:{{ io.y }}px;left:{{ io.x }}px;font-family:'Inter',sans-serif;font-size:7px;font-weight:700;color:#1c1814;line-height:1;">{{ io.text }}</div>
+    </sc-for>
+
+    <!-- STATUS WINDOW (small inset window above main label) -->
+    <sc-if value="{{ hasStatusWindow }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;top:{{ statusTop }}px;left:50%;transform:translateX(-50%);width:{{ statusW }}px;height:12px;background:linear-gradient(180deg,#1a1814 0%,#3a3530 100%);border-radius:1px;box-shadow:inset 0 1px 2px rgba(0,0,0,.7),0 1px 0 rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;padding:0 4px;box-sizing:border-box;">
+        <div style="width:6px;height:6px;border-radius:50%;background:{{ statusLedColor }};box-shadow:0 0 {{ statusLedGlow }}px {{ statusLedColor }};{{ statusLedAnim }}"></div>
+        <div style="margin-left:3px;font-family:'JetBrains Mono',monospace;font-size:6px;font-weight:600;color:{{ statusTextColor }};letter-spacing:.05em;line-height:1;">{{ statusText }}</div>
+      </div>
+    </sc-if>
+
+    <!-- BIG CHARACTERISTIC LABEL (e.g. C16, B10, D25) -->
+    <sc-if value="{{ hasMainLabel }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;top:{{ mainLabelTop }}px;left:0;right:0;text-align:center;font-family:'JetBrains Mono',monospace;font-size:{{ mainLabelSize }}px;font-weight:700;color:#16120e;letter-spacing:-.01em;line-height:1;">{{ mainLabel }}</div>
+    </sc-if>
+
+    <!-- spec line under main label (e.g. 6kA, ~230V) -->
+    <sc-if value="{{ hasSpecLine }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;top:{{ specLineTop }}px;left:0;right:0;text-align:center;font-family:'JetBrains Mono',monospace;font-size:7px;font-weight:500;color:#3a3528;letter-spacing:.04em;line-height:1.2;">{{ specLine }}</div>
+    </sc-if>
+
+    <!-- TEST button hole (for RCD / RCBO) -->
+    <sc-if value="{{ hasTestButton }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;bottom:34px;left:50%;transform:translate(-50%,0);width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#3a3530 0%,#0f0c09 80%);box-shadow:inset 0 1px 2px rgba(0,0,0,.7),0 1px 0 rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:7px;font-weight:700;color:#d6cfbd;letter-spacing:.05em;line-height:1;">T</div>
+      </div>
+    </sc-if>
+
+    <!-- bottom area label (e.g. brand-neutral marking) -->
+    <sc-if value="{{ hasBottomMark }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;bottom:6px;left:0;right:0;text-align:center;font-family:'Inter',sans-serif;font-size:6px;font-weight:600;color:#3a3528;letter-spacing:.12em;line-height:1;opacity:.55;">{{ bottomMark }}</div>
+    </sc-if>
+
+  </div>
+
+  <!-- bottom cap with terminal slot + screw -->
+  <div style="position:absolute;bottom:0;left:0;right:0;height:14px;background:linear-gradient(180deg,#bdb6a3 0%,#d6cfbd 40%,#ece6d6 100%);border-top:1px solid rgba(0,0,0,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.4);">
+    <div style="position:absolute;bottom:3px;left:50%;transform:translateX(-50%);width:{{ terminalWidth }}px;height:5px;background:#16130f;border-radius:1px;box-shadow:inset 0 1px 1px rgba(0,0,0,.6);"></div>
+    <sc-for list="{{ poleScrews }}" as="s" hint-placeholder-count="1">
+      <div style="position:absolute;bottom:9px;left:{{ s.x }}px;width:4px;height:4px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#9a9384 0%,#4a4538 80%);"></div>
+    </sc-for>
+  </div>
+
+  <!-- fault overlay (translucent red wash + corner badge) -->
+  <sc-if value="{{ isFaulted }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;background:rgba(220,60,40,.14);pointer-events:none;animation:faultpulse 1.6s ease-in-out infinite;"></div>
+    <div style="position:absolute;top:-6px;right:-6px;width:14px;height:14px;border-radius:50%;background:#dc3c28;border:2px solid #16130f;box-shadow:0 0 6px rgba(220,60,40,.7);"></div>
+  </sc-if>
+
+  <!-- warn overlay (amber) -->
+  <sc-if value="{{ isWarned }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;top:-6px;right:-6px;width:14px;height:14px;border-radius:50%;background:#e8a93c;border:2px solid #16130f;box-shadow:0 0 6px rgba(232,169,60,.7);font-family:'Inter';font-size:8px;font-weight:800;color:#16130f;display:flex;align-items:center;justify-content:center;line-height:1;">!</div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 280, &quot;height&quot;: 200 },
+  &quot;width&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 48, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;height&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 136, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;poles&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: 1, &quot;options&quot;: [1, 2, 3], &quot;tsType&quot;: &quot;number&quot; },
+  &quot;type&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;auto&quot;, &quot;options&quot;: [&quot;auto&quot;, &quot;rcd&quot;, &quot;diff&quot;, &quot;uvr&quot;, &quot;switch&quot;], &quot;tsType&quot;: &quot;string&quot; },
+  &quot;state&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;on&quot;, &quot;options&quot;: [&quot;on&quot;, &quot;off&quot;, &quot;trip&quot;, &quot;warn&quot;, &quot;dead&quot;], &quot;tsType&quot;: &quot;string&quot; },
+  &quot;char&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;C&quot;, &quot;options&quot;: [&quot;B&quot;, &quot;C&quot;, &quot;D&quot;], &quot;tsType&quot;: &quot;string&quot; },
+  &quot;rating&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;16&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;topLabel&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;16A&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;bottomMark&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;MOD-DIN&quot;, &quot;tsType&quot;: &quot;string&quot; }
+}">
+class Component extends DCLogic {
+  renderVals() {
+    const w = parseInt(this.props.width ?? 48, 10);
+    const h = parseInt(this.props.height ?? 136, 10);
+    const poles = parseInt(this.props.poles ?? 1, 10);
+    const state = this.props.state ?? 'on'; // on | off | trip | warn | dead
+    const type = this.props.type ?? 'auto'; // auto | rcd | diff | uvr | switch
+    const char = this.props.char ?? 'C';
+    const rating = this.props.rating ?? '16';
+    const topLabel = this.props.topLabel ?? `${rating}A`;
+    const bottomMark = this.props.bottomMark ?? 'MOD-DIN';
+
+    // levers: one per pole, evenly spaced inside body
+    const bodyW = w;
+    const leverW = poles === 1 ? 20 : poles === 2 ? 14 : 12;
+    const leverGap = 4;
+    const levers = [];
+    const moldSeams = [];
+    const ioMarks = [];
+    const poleScrews = [];
+
+    const totalLeverBlock = leverW * poles + leverGap * (poles - 1);
+    const leverStart = Math.round((bodyW - totalLeverBlock) / 2);
+
+    // lever position depends on state
+    const leverTop = state === 'on' ? 8 : (state === 'trip' ? 16 : 22);
+    const leverText = state === 'on' ? 'I' : 'O';
+    const textColor = state === 'on' ? '#5dd5a0' : (state === 'trip' ? '#ff6a4d' : '#a8a195');
+
+    for (let i = 0; i < poles; i++) {
+      const x = leverStart + i * (leverW + leverGap);
+      levers.push({
+        x, top: leverTop,
+        w: leverW,
+        notchW: Math.max(4, leverW - 6),
+        text: leverText,
+        textColor,
+      });
+      if (i > 0) moldSeams.push({ x: x - leverGap/2 });
+      // pole screws on top + bottom caps
+      poleScrews.push({ x: x + leverW/2 - 2 });
+    }
+
+    // I/O markings beside lever
+    ioMarks.push({ x: 3, y: 14, text: 'I' });
+    ioMarks.push({ x: bodyW - 7, y: 14, text: 'O' });
+
+    // terminal slot width scales with poles
+    const terminalWidth = Math.min(bodyW - 8, totalLeverBlock + 4);
+
+    // status LED color
+    let statusLedColor = '#5dd5a0';
+    let statusTextColor = '#cfe4f0';
+    let statusText = 'ON';
+    let statusLedGlow = 4;
+    let statusLedAnim = '';
+    if (state === 'off') { statusLedColor = '#3a3530'; statusTextColor = '#6a6256'; statusText = 'OFF'; statusLedGlow = 0; }
+    else if (state === 'trip') { statusLedColor = '#ff6a4d'; statusTextColor = '#ffb59c'; statusText = 'TRIP'; statusLedGlow = 6; statusLedAnim = 'animation:ledpulse 1.2s ease-in-out infinite;'; }
+    else if (state === 'warn') { statusLedColor = '#e8a93c'; statusTextColor = '#f4cd84'; statusText = 'CHK'; statusLedGlow = 5; }
+    else if (state === 'dead') { statusLedColor = '#1a1814'; statusTextColor = '#4a4538'; statusText = '—'; statusLedGlow = 0; }
+
+    // status window sizing
+    const statusW = Math.max(28, bodyW - 8);
+    const hasStatusWindow = type !== 'switch' && bodyW >= 38;
+
+    // main label content
+    let mainLabel = `${char}${rating}`;
+    let mainLabelSize = 13;
+    let hasMainLabel = true;
+    let specLine = '';
+    let hasSpecLine = false;
+
+    if (type === 'rcd') {
+      mainLabel = `${rating}A`;
+      specLine = `Δ 30мA`;
+      hasSpecLine = true;
+      mainLabelSize = 12;
+    } else if (type === 'diff') {
+      mainLabel = `${char}${rating}`;
+      specLine = `Δ 30мA`;
+      hasSpecLine = true;
+      mainLabelSize = 12;
+    } else if (type === 'uvr') {
+      mainLabel = 'УЗМ';
+      specLine = '~230В';
+      hasSpecLine = true;
+      mainLabelSize = 11;
+    } else if (type === 'switch') {
+      mainLabel = '';
+      hasMainLabel = false;
+    }
+
+    const hasTestButton = type === 'rcd' || type === 'diff';
+    const mainLabelTop = type === 'switch' ? 48 : 52;
+    const specLineTop = mainLabelTop + mainLabelSize + 3;
+
+    const isFaulted = state === 'trip';
+    const isWarned = state === 'warn';
+
+    const rootStyle = `position:relative;width:${w}px;height:${h}px;background:#cdc6b3;border:1px solid rgba(0,0,0,.35);border-radius:2px;box-shadow:0 2px 4px rgba(0,0,0,.22),inset 0 0 0 1px rgba(255,255,255,.15);box-sizing:border-box;flex:none;`;
+
+    return {
+      rootStyle,
+      terminalWidth,
+      poleScrews,
+      moldSeams,
+      levers,
+      ioMarks,
+      hasStatusWindow,
+      statusTop: 36,
+      statusW,
+      statusLedColor,
+      statusLedGlow,
+      statusLedAnim,
+      statusTextColor,
+      statusText,
+      hasMainLabel,
+      mainLabelTop,
+      mainLabelSize,
+      mainLabel,
+      hasSpecLine,
+      specLineTop,
+      specLine,
+      hasTestButton,
+      hasBottomMark: bodyW >= 38,
+      bottomMark,
+      topLabelText: topLabel,
+      isFaulted,
+      isWarned,
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0d1f2e;
+  color: #cfe4f0;
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer utilities {
+  .bg-grid-fine {
+    background-image:
+      linear-gradient(to right, #1a3850 1px, transparent 1px),
+      linear-gradient(to bottom, #1a3850 1px, transparent 1px);
+    background-size: 10px 10px;
+  }
+  .bg-grid-bold {
+    background-image:
+      linear-gradient(to right, #2a5476 1px, transparent 1px),
+      linear-gradient(to bottom, #2a5476 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+  .vignette {
+    background: radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(4,16,26,.8) 100%);
+  }
+  .pe-stripes {
+    background: repeating-linear-gradient(45deg, #cfa518 0 3px, #2a7a3a 3px 6px);
+  }
+}
