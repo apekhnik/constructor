@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -23,6 +23,11 @@ import {
   makePlacedFromCatalog,
   type PlacedModule,
 } from "./model/scheme";
+import {
+  deserializeScheme,
+  saveToStorage,
+  serializeScheme,
+} from "./model/persistence";
 import type { DiagnosticMessage } from "./model/types";
 import type { LogEntry } from "./ui/state";
 
@@ -36,6 +41,59 @@ function toLogEntries(diags: DiagnosticMessage[]): LogEntry[] {
 }
 
 function Header({ moduleCount }: { moduleCount: number }) {
+  const { scheme, dispatch } = useScheme();
+  const fileInput = useRef<HTMLInputElement | null>(null);
+
+  const handleExport = () => {
+    const json = JSON.stringify(serializeScheme(scheme), null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.href = url;
+    a.download = `shield-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        parsed.version !== 1 ||
+        !Array.isArray(parsed.modules) ||
+        !Array.isArray(parsed.wires)
+      ) {
+        alert("Файл не похож на сохранённую сборку.");
+        return;
+      }
+      dispatch({ type: "load", scheme: deserializeScheme(parsed) });
+    } catch {
+      alert("Не удалось разобрать JSON.");
+    }
+  };
+
+  const handleClear = () => {
+    if (confirm("Очистить сборку? Действие необратимо.")) {
+      dispatch({ type: "clear" });
+      // Persist the clear immediately so a reload doesn't bring the old
+      // scheme back (autosave fires on next tick).
+      saveToStorage({
+        ...scheme,
+        modules: scheme.modules.filter((m) => m.kind === "source"),
+        wires: [],
+      });
+    }
+  };
+
   return (
     <header className="flex h-[3.5rem] shrink-0 items-center gap-[1.5rem] border-b border-bp-line bg-bp-surfaceTop px-[1.5rem] backdrop-blur">
       <div className="flex items-center gap-[0.75rem]">
@@ -46,7 +104,7 @@ function Header({ moduleCount }: { moduleCount: number }) {
           ЩИТ
         </span>
         <span className="font-mono text-[0.65rem] text-bp-textDim">
-          / проект-04 · режим сборки
+          / автосохранение · режим сборки
         </span>
       </div>
 
@@ -60,13 +118,35 @@ function Header({ moduleCount }: { moduleCount: number }) {
         </span>
       </div>
 
-      <div className="flex gap-[0.35rem] font-mono text-[0.55rem] uppercase tracking-widest text-bp-textDim">
-        <span className="border border-bp-line px-[0.55rem] py-[0.35rem]">
-          Сохранить
-        </span>
-        <span className="border border-bp-line px-[0.55rem] py-[0.35rem]">
+      <div className="flex gap-[0.35rem] font-mono text-[0.55rem] uppercase tracking-widest">
+        <button
+          type="button"
+          onClick={handleExport}
+          className="border border-bp-line px-[0.55rem] py-[0.35rem] text-bp-textDim transition-colors hover:bg-bp-surface hover:text-bp-text"
+        >
           Экспорт
-        </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => fileInput.current?.click()}
+          className="border border-bp-line px-[0.55rem] py-[0.35rem] text-bp-textDim transition-colors hover:bg-bp-surface hover:text-bp-text"
+        >
+          Импорт
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleImport}
+        />
+        <button
+          type="button"
+          onClick={handleClear}
+          className="border border-bp-line px-[0.55rem] py-[0.35rem] text-bp-textDim transition-colors hover:border-bp-err hover:text-bp-err"
+        >
+          Очистить
+        </button>
       </div>
     </header>
   );

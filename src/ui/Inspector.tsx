@@ -1,5 +1,6 @@
 import { useScheme } from "./SchemeContext";
 import { useEngineSnapshot } from "./SimulationContext";
+import { useNow } from "../engine/runtime";
 import type { ComponentKind, TripReason } from "../model/types";
 import type { Endpoint, PlacedModule, SwitchPosition, Wire } from "../model/scheme";
 
@@ -182,9 +183,12 @@ function ThresholdInput(props: {
 
 function ModuleSection({ m }: { m: PlacedModule }) {
   const { dispatch } = useScheme();
-  const { runtime } = useEngineSnapshot();
+  const { runtime, recloseAt } = useEngineSnapshot();
   const rt = runtime[m.id];
   const isFixture = m.kind === "source";
+  const reclose = recloseAt[m.id];
+  const now = useNow(reclose ? 500 : 60_000);
+  const recloseSec = reclose ? Math.max(0, Math.ceil((reclose - now) / 1000)) : null;
   return (
     <div className="flex flex-col gap-[0.5rem]">
       <div className="flex items-start justify-between gap-[0.5rem]">
@@ -246,6 +250,9 @@ function ModuleSection({ m }: { m: PlacedModule }) {
         )}
         {m.tripped && m.trip_reason && (
           <Row label="авария" value={TRIP_LABEL[m.trip_reason]} />
+        )}
+        {recloseSec !== null && (
+          <Row label="АПВ через" value={`${recloseSec} с`} />
         )}
       </div>
 

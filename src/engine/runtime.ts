@@ -3,7 +3,7 @@
 // immediately, and starts/cancels timers for delayed trips (thermal,
 // undervoltage) and auto-reclose (APV) of the voltage relay.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Scheme, SchemeAction } from "../model/scheme";
 import { simulate, type ModuleRuntime } from "../model/simulation";
 import type { DiagnosticMessage, TripReason } from "../model/types";
@@ -19,6 +19,10 @@ interface PendingTimer {
 export interface EngineSnapshot {
   runtime: Record<string, ModuleRuntime>;
   diagnostics: DiagnosticMessage[];
+  // Wall-clock timestamp (Date.now() ms) at which the auto-reclose of the
+  // given voltage_relay will fire. Only present for relays whose APV is
+  // currently armed (tripped + voltage in safe band).
+  recloseAt: Record<string, number>;
 }
 
 export function useSimulation(
@@ -32,6 +36,7 @@ export function useSimulation(
   const recloseTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
+  const [recloseAt, setRecloseAt] = useState<Record<string, number>>({});
 
   // Apply instant trips this tick. Done in an effect (not during render) to
   // keep the simulation pure.
@@ -77,6 +82,7 @@ export function useSimulation(
   // Auto-reclose (APV) for voltage relays whose grid voltage has returned
   // to the safe band (CLAUDE.md §2.5).
   useEffect(() => {
+    const next: Record<string, number> = {};
     for (const m of scheme.modules) {
       if (m.kind !== "voltage_relay") continue;
       const safe =
@@ -88,17 +94,38 @@ export function useSimulation(
         (m.trip_reason === "overvoltage" || m.trip_reason === "undervoltage") &&
         safe;
       if (should && !recloseTimers.current.has(m.id)) {
+        const deadline = Date.now() + RECLOSE_DELAY_MS;
         const h = setTimeout(() => {
           recloseTimers.current.delete(m.id);
+          setRecloseAt((prev) => {
+            const copy = { ...prev };
+            delete copy[m.id];
+            return copy;
+          });
           dispatch({ type: "reset_trip", id: m.id });
         }, RECLOSE_DELAY_MS);
         recloseTimers.current.set(m.id, h);
+        next[m.id] = deadline;
+      } else if (should && recloseTimers.current.has(m.id)) {
+        // Already armed — keep the existing deadline (mirror from previous state).
+        // We'll preserve it via the setter below.
       }
       if (!should && recloseTimers.current.has(m.id)) {
         clearTimeout(recloseTimers.current.get(m.id)!);
         recloseTimers.current.delete(m.id);
       }
     }
+    // Reconcile state: keep already-armed deadlines, add new ones, drop the rest.
+    setRecloseAt((prev) => {
+      const merged: Record<string, number> = {};
+      for (const [id, deadline] of Object.entries(prev)) {
+        if (recloseTimers.current.has(id)) merged[id] = deadline;
+      }
+      for (const [id, deadline] of Object.entries(next)) {
+        merged[id] = deadline;
+      }
+      return merged;
+    });
   }, [scheme.modules, scheme.source, dispatch]);
 
   // Cleanup on unmount.
@@ -114,7 +141,18 @@ export function useSimulation(
   }, []);
 
   return useMemo(
-    () => ({ runtime: tick.runtime, diagnostics: tick.diagnostics }),
-    [tick],
+    () => ({ runtime: tick.runtime, diagnostics: tick.diagnostics, recloseAt }),
+    [tick, recloseAt],
   );
+}
+
+// Small hook that re-renders the calling component at a fixed cadence.
+// Useful for live countdowns that don't have their own state.
+export function useNow(intervalMs = 500): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const h = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(h);
+  }, [intervalMs]);
+  return now;
 }

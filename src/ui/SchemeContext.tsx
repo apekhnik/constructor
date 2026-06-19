@@ -1,16 +1,17 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useReducer,
   type ReactNode,
 } from "react";
 import {
-  emptyScheme,
   schemeReducer,
   type Scheme,
   type SchemeAction,
 } from "../model/scheme";
+import { initialScheme, saveToStorage } from "../model/persistence";
 
 interface SchemeContextValue {
   scheme: Scheme;
@@ -20,7 +21,14 @@ interface SchemeContextValue {
 const SchemeContext = createContext<SchemeContextValue | null>(null);
 
 export function SchemeProvider({ children }: { children: ReactNode }) {
-  const [scheme, dispatch] = useReducer(schemeReducer, undefined, emptyScheme);
+  const [scheme, dispatch] = useReducer(schemeReducer, undefined, initialScheme);
+
+  // Autosave whenever durable scheme state changes. Selection-only changes
+  // are cheap to re-save, so we don't bother debouncing for MVP.
+  useEffect(() => {
+    saveToStorage(scheme);
+  }, [scheme.modules, scheme.wires, scheme.source]);
+
   const value = useMemo<SchemeContextValue>(
     () => ({ scheme, dispatch }),
     [scheme],

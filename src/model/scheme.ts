@@ -293,6 +293,7 @@ export type SchemeAction =
   | { type: "set_pending"; ep: Endpoint | null }
   | { type: "set_source"; patch: Partial<SourceState> }
   | { type: "set_trip"; id: string; reason: TripReason }
+  | { type: "load"; scheme: Scheme }
   | { type: "clear" };
 
 function removeWiresAttachedTo(wires: Wire[], moduleId: string): Wire[] {
@@ -450,6 +451,14 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
     }
     case "set_pending": {
       return { ...scheme, pendingFrom: action.ep };
+    }
+    case "load": {
+      return {
+        ...action.scheme,
+        selectedId: null,
+        selectedWireId: null,
+        pendingFrom: null,
+      };
     }
     case "clear": {
       return emptyScheme();
