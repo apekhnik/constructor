@@ -1,4 +1,5 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useElementSize } from "./useElementSize";
 import { useDraggable, useDroppable, useDndMonitor } from "@dnd-kit/core";
 import { DinModule } from "./DinModule";
 import { useScheme } from "./SchemeContext";
@@ -13,6 +14,7 @@ import {
   BUS_ZONE_Y_REM,
   LAYOUT_HEIGHT_REM,
   LAYOUT_WIDTH_REM,
+  REM_TO_PX,
   LOAD_HEIGHT_REM,
   LOAD_MODULE_HEIGHT_REM,
   LOAD_TOP_DANGLE_REM,
@@ -691,9 +693,28 @@ function WiringLayer({
 
 // ----------------------- Workspace -----------------------
 
+// Padding around the layout inside the workspace section, in rem.
+const WORKSPACE_PAD_REM = 1.5;
+// Min and max zoom factor for the layout box. 1.0 = original size.
+const MIN_SCALE = 1.0;
+const MAX_SCALE = 2.4;
+
 export function Workspace() {
   const { scheme, dispatch } = useScheme();
   const [activeDrag, setActiveDrag] = useState<DraggableData | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const { width: availWidth, height: availHeight } = useElementSize(sectionRef);
+
+  const scale = useMemo(() => {
+    if (availWidth <= 0 || availHeight <= 0) return 1;
+    const padPx = WORKSPACE_PAD_REM * 2 * REM_TO_PX;
+    const layoutPxW = LAYOUT_WIDTH_REM * REM_TO_PX;
+    const layoutPxH = LAYOUT_HEIGHT_REM * REM_TO_PX;
+    const byW = (availWidth - padPx) / layoutPxW;
+    const byH = (availHeight - padPx - 3 * REM_TO_PX) / layoutPxH; // reserve room for the header strip
+    const candidate = Math.min(byW, byH);
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, candidate));
+  }, [availWidth, availHeight]);
 
   useDndMonitor({
     onDragStart: (e) => {
@@ -744,8 +765,14 @@ export function Workspace() {
     if (scheme.selectedWireId) dispatch({ type: "select_wire", id: null });
   };
 
+  // Reserve enough room after scaling so the parent can scroll if the
+  // user zoomed in past the viewport.
+  const scaledWidthPx = LAYOUT_WIDTH_REM * REM_TO_PX * scale;
+  const scaledHeightPx = LAYOUT_HEIGHT_REM * REM_TO_PX * scale;
+
   return (
     <section
+      ref={sectionRef}
       className="relative flex-1 overflow-auto border border-bp-line"
       style={{
         background:
@@ -762,42 +789,55 @@ export function Workspace() {
           <div className="font-mono text-[0.625rem] uppercase tracking-widest text-bp-textDim">
             // схема щита · {scheme.modules.length} мод · {scheme.wires.length} провод(а/ов)
           </div>
-          <div className="font-mono text-[0.625rem] tracking-widest text-bp-textDim">
-            {scheme.pendingFrom
-              ? "выберите вторую клемму · Esc отменить"
-              : "без питания · сборка"}
+          <div className="flex items-center gap-[0.75rem] font-mono text-[0.625rem] tracking-widest text-bp-textDim">
+            <span>масштаб ×{scale.toFixed(2)}</span>
+            <span>
+              {scheme.pendingFrom
+                ? "выберите вторую клемму · Esc отменить"
+                : "без питания · сборка"}
+            </span>
           </div>
         </div>
 
         <div
           className="relative mx-auto"
           style={{
-            width: `${LAYOUT_WIDTH_REM}rem`,
-            height: `${LAYOUT_HEIGHT_REM}rem`,
+            width: `${scaledWidthPx}px`,
+            height: `${scaledHeightPx}px`,
           }}
         >
-          <SupplyLayer />
-          <RailLayer
-            rail={1}
-            y={RAIL_1_Y_REM}
-            title={RAIL_TITLES[0]}
-            modules={railsModules[0]}
-            drag={drag}
-          />
-          <BusZoneLayer />
-          <RailLayer
-            rail={2}
-            y={RAIL_2_Y_REM}
-            title={RAIL_TITLES[1]}
-            modules={railsModules[1]}
-            drag={drag}
-          />
-          <LoadLayer modules={loadsModules} drag={drag} />
-          <WiringLayer
-            scheme={scheme}
-            onTerminalClick={handleTerminalClick}
-            onWireClick={handleWireClick}
-          />
+          <div
+            className="absolute left-0 top-0"
+            style={{
+              width: `${LAYOUT_WIDTH_REM}rem`,
+              height: `${LAYOUT_HEIGHT_REM}rem`,
+              transform: `scale(${scale})`,
+              transformOrigin: "top left",
+            }}
+          >
+            <SupplyLayer />
+            <RailLayer
+              rail={1}
+              y={RAIL_1_Y_REM}
+              title={RAIL_TITLES[0]}
+              modules={railsModules[0]}
+              drag={drag}
+            />
+            <BusZoneLayer />
+            <RailLayer
+              rail={2}
+              y={RAIL_2_Y_REM}
+              title={RAIL_TITLES[1]}
+              modules={railsModules[1]}
+              drag={drag}
+            />
+            <LoadLayer modules={loadsModules} drag={drag} />
+            <WiringLayer
+              scheme={scheme}
+              onTerminalClick={handleTerminalClick}
+              onWireClick={handleWireClick}
+            />
+          </div>
         </div>
       </div>
     </section>
