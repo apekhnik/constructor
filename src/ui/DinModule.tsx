@@ -36,15 +36,48 @@ function leverColor(m: PlacedModule): string {
   return "bg-plastic-lever";
 }
 
-function statusText(m: PlacedModule): "ON" | "OFF" | "FAULT" {
-  if (m.tripped) return "FAULT";
+type StatusLabel =
+  | "ON"
+  | "OFF"
+  | "КЗ"
+  | "ПЕРЕГР"
+  | "УТЕЧКА"
+  | "U>"
+  | "U<"
+  | "АВАР";
+
+const TRIP_SHORT: Record<string, StatusLabel> = {
+  short_circuit: "КЗ",
+  overload: "ПЕРЕГР",
+  leak: "УТЕЧКА",
+  overvoltage: "U>",
+  undervoltage: "U<",
+  no_neutral: "АВАР",
+};
+
+const TRIP_TOOLTIP: Record<string, string> = {
+  short_circuit: "Короткое замыкание: ток превысил порог электромагнитного расцепителя",
+  overload: "Перегрузка: ток выше номинала, сработал тепловой расцепитель — дайте автомату остыть",
+  leak: "Ток утечки превысил уставку — отключение по дифференциальной защите",
+  overvoltage: "Напряжение превысило верхний порог реле — линия отключена",
+  undervoltage: "Напряжение ниже нижнего порога реле — линия отключена",
+  no_neutral: "Обрыв нуля — реле напряжения отключило нагрузку",
+};
+
+function statusText(m: PlacedModule): StatusLabel {
+  if (m.tripped) return (m.trip_reason && TRIP_SHORT[m.trip_reason]) ?? "АВАР";
   return m.on ? "ON" : "OFF";
 }
 
-const STATUS_COLOR: Record<"ON" | "OFF" | "FAULT", string> = {
+const STATUS_COLOR: Record<string, string> = {
   ON: "text-bp-ok",
   OFF: "text-bp-textMuted",
-  FAULT: "text-bp-err",
+  "КЗ": "text-bp-err",
+  "ПЕРЕГР": "text-bp-err",
+  "УТЕЧКА": "text-bp-err",
+  "U>": "text-bp-err",
+  "U<": "text-bp-err",
+  "АВАР": "text-bp-err",
 };
 
 const KIND_HAS_TEST: ComponentKind[] = ["rcd", "diff_breaker"];
@@ -70,6 +103,10 @@ export function DinModule({ m, overlay = false }: DinModuleProps) {
   const poles = m.poles;
   const widthRem = moduleWidthRem(poles);
   const status = statusText(m);
+  const tooltip =
+    m.tripped && m.trip_reason
+      ? `${m.label} · ${TRIP_TOOLTIP[m.trip_reason] ?? "Аварийное отключение"}`
+      : m.label;
   const hasTest = KIND_HAS_TEST.includes(m.kind);
 
   return (
@@ -108,6 +145,7 @@ export function DinModule({ m, overlay = false }: DinModuleProps) {
       }}
       aria-label={`${m.label}, ${status}`}
       aria-pressed={selected}
+      title={tooltip}
     >
       <div
         className="absolute left-0 right-0 top-0 h-[0.875rem]"

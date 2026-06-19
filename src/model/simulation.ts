@@ -6,6 +6,7 @@
 // This module is deliberately framework-free: no React, no timers. The
 // engine layer applies delayed trips with real or accelerated wall time.
 
+import { analyzeStructure } from "./analysis";
 import { buildGraph, type SchemeGraph } from "./graph";
 import { GRID_SOURCE_ID } from "./scheme";
 import type { PlacedModule, Scheme, SourceState } from "./scheme";
@@ -414,6 +415,60 @@ export function simulate(scheme: Scheme): TickResult {
       related_components: [GRID_SOURCE_ID],
     });
   }
+
+  // ---- Educational hints for already-tripped modules ----
+  for (const m of scheme.modules) {
+    if (!m.tripped) continue;
+    if (m.trip_reason === "overload") {
+      diagnostics.push({
+        severity: "info",
+        code: "HINT_THERMAL_COOLDOWN",
+        message_short: "Дайте автомату остыть",
+        message_full: `«${m.label}» сработал по перегреву. Биметаллической пластине нужно время на остывание — не включайте автомат повторно сразу.`,
+        related_components: [m.id],
+      });
+    }
+    if (
+      m.kind === "voltage_relay" &&
+      (m.trip_reason === "overvoltage" || m.trip_reason === "undervoltage")
+    ) {
+      diagnostics.push({
+        severity: "info",
+        code: "HINT_RELAY_APV",
+        message_short: "Реле сделает АПВ автоматически",
+        message_full: `«${m.label}» снова включит линию через несколько секунд после возврата напряжения в безопасный диапазон ${m.u_min_V}–${m.u_max_V} В.`,
+        related_components: [m.id],
+      });
+    }
+  }
+
+  // ---- Neutral-break educational message ----
+  if (src.grid_active && src.neutral_break) {
+    const guardingRelay = scheme.modules.find(
+      (m) => m.kind === "voltage_relay" && m.tripped,
+    );
+    if (guardingRelay) {
+      diagnostics.push({
+        severity: "info",
+        code: "HINT_RELAY_SAVES_FROM_NO_N",
+        message_short: "Реле защитило от обрыва нуля",
+        message_full: `Без нуля напряжение на нагрузке непредсказуемо. «${guardingRelay.label}» обнаружило аварийный режим и отключило линию — это одна из главных причин ставить реле напряжения.`,
+        related_components: [guardingRelay.id],
+      });
+    } else {
+      diagnostics.push({
+        severity: "warning",
+        code: "WARN_NO_N_NO_RELAY",
+        message_short: "Обрыв N без защиты",
+        message_full:
+          "Сейчас оборван ноль. Без реле напряжения нагрузки не получают питания, а в трёхфазных сетях возможен перекос фаз и выход бытовой техники из строя.",
+        related_components: [GRID_SOURCE_ID],
+      });
+    }
+  }
+
+  // ---- Structural §2.4 warnings ----
+  diagnostics.push(...analyzeStructure(scheme));
 
   return { runtime, diagnostics, newTrips };
 }

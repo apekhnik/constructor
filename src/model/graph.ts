@@ -50,22 +50,28 @@ export interface SchemeGraph {
   allNodes(): NodeId[];
 }
 
-function moduleInternalLinks(m: PlacedModule): Array<[string, string]> {
+function moduleInternalLinks(
+  m: PlacedModule,
+  opts: { structural?: boolean } = {},
+): Array<[string, string]> {
   const links: Array<[string, string]> = [];
   const id = (t: string) => `mod:${m.id}:${t}`;
+  // In structural mode (used by the analyzer), treat every switching device
+  // as armed — we want to see "would current flow if everything was on".
+  const armed = opts.structural ? true : m.on && !m.tripped;
   switch (m.kind) {
     case "main_breaker":
     case "diff_breaker":
     case "rcd": {
       // 2P switching — passes L and N when armed.
-      if (m.on && !m.tripped) {
+      if (armed) {
         links.push([id("in_L"), id("out_L")]);
         links.push([id("in_N"), id("out_N")]);
       }
       break;
     }
     case "branch_breaker": {
-      if (m.on && !m.tripped) {
+      if (armed) {
         links.push([id("in_L"), id("out_L")]);
       }
       break;
@@ -73,7 +79,7 @@ function moduleInternalLinks(m: PlacedModule): Array<[string, string]> {
     case "voltage_relay": {
       // N is a transit (CLAUDE.md §2.5) — never broken by the relay.
       links.push([id("in_N"), id("out_N")]);
-      if (m.on && !m.tripped) {
+      if (armed) {
         links.push([id("in_L"), id("out_L")]);
       }
       break;
@@ -100,7 +106,16 @@ function moduleInternalLinks(m: PlacedModule): Array<[string, string]> {
   return links;
 }
 
-export function buildGraph(scheme: Scheme): SchemeGraph {
+export interface BuildGraphOptions {
+  // If true, ignore on/tripped state — pretend every switching device is
+  // armed (in_↔out_ pass-through active). Used by the structural analyzer.
+  structural?: boolean;
+}
+
+export function buildGraph(
+  scheme: Scheme,
+  opts: BuildGraphOptions = {},
+): SchemeGraph {
   const dsu = new DSU();
 
   // Register all module terminals as nodes.
@@ -126,7 +141,7 @@ export function buildGraph(scheme: Scheme): SchemeGraph {
 
   // Internal pass-throughs of switching modules.
   for (const m of scheme.modules) {
-    for (const [a, b] of moduleInternalLinks(m)) {
+    for (const [a, b] of moduleInternalLinks(m, opts)) {
       dsu.union(a, b);
     }
   }

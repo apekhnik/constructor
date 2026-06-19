@@ -304,3 +304,129 @@ describe("simulate — three-way switch", () => {
     expect(r.runtime[loadId].lit).toBe(false);
   });
 });
+
+describe("analyzeStructure — logical warnings (§2.4)", () => {
+  it("LOAD_NO_PE: load chassis not wired to PE bus", () => {
+    let s = emptyScheme();
+    const a = place(s, "load", 3, 0);
+    s = a.scheme;
+    const loadId = a.id;
+    // Wire only L and N, leave PE floating.
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(loadId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(loadId, "in_N"));
+    const r = simulate(s);
+    expect(
+      r.diagnostics.some(
+        (d) => d.code === "LOAD_NO_PE" && d.related_components.includes(loadId),
+      ),
+    ).toBe(true);
+  });
+
+  it("LOAD_NO_PE: cleared when PE is wired to the PE bus", () => {
+    let s = emptyScheme();
+    const a = place(s, "load", 3, 0);
+    s = a.scheme;
+    const loadId = a.id;
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(loadId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(loadId, "in_N"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_PE"), busTap("PE", 0));
+    s = wire(s, busTap("PE", 1), modTerm(loadId, "in_PE"));
+    const r = simulate(s);
+    expect(r.diagnostics.some((d) => d.code === "LOAD_NO_PE")).toBe(false);
+  });
+
+  it("BAD_BREAKER_RATING: a 40 A breaker downstream of a 25 A RCD", () => {
+    let s = emptyScheme();
+    const a = place(s, "rcd", 1, 0);
+    s = patchModule(a.scheme, a.id, { rated_current_A: 25 });
+    const rcdId = a.id;
+    const b = place(s, "branch_breaker", 1, 2);
+    s = patchModule(b.scheme, b.id, { rated_current_A: 40 });
+    const breakerId = b.id;
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(rcdId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(rcdId, "in_N"));
+    s = wire(s, modTerm(rcdId, "out_L"), modTerm(breakerId, "in_L"));
+    const r = simulate(s);
+    expect(
+      r.diagnostics.some(
+        (d) =>
+          d.code === "BAD_BREAKER_RATING" &&
+          d.related_components.includes(breakerId) &&
+          d.related_components.includes(rcdId),
+      ),
+    ).toBe(true);
+  });
+
+  it("BAD_BREAKER_RATING: not raised when breaker is rated below RCD", () => {
+    let s = emptyScheme();
+    const a = place(s, "rcd", 1, 0);
+    s = patchModule(a.scheme, a.id, { rated_current_A: 40 });
+    const rcdId = a.id;
+    const b = place(s, "branch_breaker", 1, 2);
+    s = patchModule(b.scheme, b.id, { rated_current_A: 16 });
+    const breakerId = b.id;
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(rcdId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(rcdId, "in_N"));
+    s = wire(s, modTerm(rcdId, "out_L"), modTerm(breakerId, "in_L"));
+    const r = simulate(s);
+    expect(r.diagnostics.some((d) => d.code === "BAD_BREAKER_RATING")).toBe(false);
+  });
+
+  it("RCD_NO_TRANSIT_N: load's N bypasses the RCD via the N bus", () => {
+    let s = emptyScheme();
+    const a = place(s, "rcd", 1, 0);
+    s = a.scheme;
+    const rcdId = a.id;
+    const c = place(s, "load", 3, 0);
+    s = c.scheme;
+    const loadId = c.id;
+    // L through RCD, N straight from N bus (skipping the RCD).
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(rcdId, "in_L"));
+    s = wire(s, modTerm(rcdId, "out_L"), modTerm(loadId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), busTap("N", 0));
+    s = wire(s, busTap("N", 1), modTerm(loadId, "in_N"));
+    const r = simulate(s);
+    expect(
+      r.diagnostics.some(
+        (d) =>
+          d.code === "RCD_NO_TRANSIT_N" &&
+          d.related_components.includes(loadId) &&
+          d.related_components.includes(rcdId),
+      ),
+    ).toBe(true);
+  });
+
+  it("RCD_NO_TRANSIT_N: cleared when both L and N go through RCD", () => {
+    let s = emptyScheme();
+    const a = place(s, "rcd", 1, 0);
+    s = a.scheme;
+    const rcdId = a.id;
+    const c = place(s, "load", 3, 0);
+    s = c.scheme;
+    const loadId = c.id;
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(rcdId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(rcdId, "in_N"));
+    s = wire(s, modTerm(rcdId, "out_L"), modTerm(loadId, "in_L"));
+    s = wire(s, modTerm(rcdId, "out_N"), modTerm(loadId, "in_N"));
+    const r = simulate(s);
+    expect(r.diagnostics.some((d) => d.code === "RCD_NO_TRANSIT_N")).toBe(false);
+  });
+});
+
+describe("educational hints", () => {
+  it("HINT_THERMAL_COOLDOWN appears while a breaker is tripped by overload", () => {
+    const { scheme, breakerId } = basicSchemeWithBreaker(16);
+    const tripped = patchModule(scheme, breakerId, {
+      tripped: true,
+      trip_reason: "overload",
+    });
+    const r = simulate(tripped);
+    expect(
+      r.diagnostics.some(
+        (d) =>
+          d.code === "HINT_THERMAL_COOLDOWN" &&
+          d.related_components.includes(breakerId),
+      ),
+    ).toBe(true);
+  });
+});
