@@ -13,6 +13,8 @@ export const LOAD_SLOTS = 12;
 // Built-in grid source fixture id — present in every scheme.
 export const GRID_SOURCE_ID = "fixture_grid_source";
 
+export type SwitchPosition = "network" | "off" | "generator";
+
 export interface PlacedModule {
   id: string;
   kind: ComponentKind;
@@ -27,7 +29,44 @@ export interface PlacedModule {
   on: boolean;
   tripped: boolean;
   trip_reason: TripReason;
+  // Three-way switch position; default "network" for the switch module,
+  // undefined / unused for other kinds.
+  switch_position?: SwitchPosition;
+  // Voltage relay user-tunable thresholds (CLAUDE.md §2.5).
+  u_min_V?: number;
+  u_max_V?: number;
 }
+
+// Sliders, kill-switches and simulated faults (CLAUDE.md §2.1, §2.5).
+export interface SourceState {
+  // master "power applied" toggle. Off → like an open service disconnect.
+  grid_active: boolean;
+  grid_voltage_V: number; // 0..300
+  // Upstream neutral break (simulates the §2.5 "obriv N" test).
+  neutral_break: boolean;
+  // Backup generator availability and voltage.
+  gen_active: boolean;
+  gen_voltage_V: number;
+  // Induced leakage at a specific load (mA). 0 = no leak.
+  leak_mA: number;
+  leak_target_id: string | null;
+  // Forced short-circuit on a specific load (L↔N or L↔PE). null = no SC.
+  short_target_id: string | null;
+}
+
+export const DEFAULT_U_MIN_V = 180;
+export const DEFAULT_U_MAX_V = 250;
+
+export const defaultSource = (): SourceState => ({
+  grid_active: false,
+  grid_voltage_V: 230,
+  neutral_break: false,
+  gen_active: false,
+  gen_voltage_V: 230,
+  leak_mA: 0,
+  leak_target_id: null,
+  short_target_id: null,
+});
 
 export type Endpoint =
   | { kind: "module"; moduleId: string; terminalId: string }
@@ -46,6 +85,7 @@ export interface Scheme {
   selectedId: string | null;
   selectedWireId: string | null;
   pendingFrom: Endpoint | null;
+  source: SourceState;
 }
 
 function gridSourceFixture(): PlacedModule {
@@ -69,6 +109,7 @@ export const emptyScheme = (): Scheme => ({
   selectedId: null,
   selectedWireId: null,
   pendingFrom: null,
+  source: defaultSource(),
 });
 
 const RAIL_PLACEABLE: ReadonlySet<ComponentKind> = new Set([
@@ -162,6 +203,9 @@ export function makePlacedFromCatalog(
     on: true,
     tripped: false,
     trip_reason: null,
+    switch_position: entry.kind === "three_way_switch" ? "network" : undefined,
+    u_min_V: entry.kind === "voltage_relay" ? DEFAULT_U_MIN_V : undefined,
+    u_max_V: entry.kind === "voltage_relay" ? DEFAULT_U_MAX_V : undefined,
   };
 }
 
@@ -235,10 +279,20 @@ export type SchemeAction =
   | { type: "remove"; id: string }
   | { type: "select"; id: string | null }
   | { type: "toggle_on"; id: string }
+  | { type: "reset_trip"; id: string }
+  | { type: "set_switch"; id: string; position: SwitchPosition }
+  | {
+      type: "set_relay_thresholds";
+      id: string;
+      u_min_V?: number;
+      u_max_V?: number;
+    }
   | { type: "add_wire"; from: Endpoint; to: Endpoint }
   | { type: "remove_wire"; id: string }
   | { type: "select_wire"; id: string | null }
   | { type: "set_pending"; ep: Endpoint | null }
+  | { type: "set_source"; patch: Partial<SourceState> }
+  | { type: "set_trip"; id: string; reason: TripReason }
   | { type: "clear" };
 
 function removeWiresAttachedTo(wires: Wire[], moduleId: string): Wire[] {
@@ -306,9 +360,58 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
       return {
         ...scheme,
         modules: scheme.modules.map((x) =>
-          x.id === action.id ? { ...x, on: !x.on } : x,
+          x.id === action.id
+            ? { ...x, on: !x.on, tripped: false, trip_reason: null }
+            : x,
         ),
       };
+    }
+    case "reset_trip": {
+      return {
+        ...scheme,
+        modules: scheme.modules.map((x) =>
+          x.id === action.id
+            ? { ...x, tripped: false, trip_reason: null, on: true }
+            : x,
+        ),
+      };
+    }
+    case "set_trip": {
+      return {
+        ...scheme,
+        modules: scheme.modules.map((x) =>
+          x.id === action.id
+            ? { ...x, tripped: action.reason !== null, trip_reason: action.reason }
+            : x,
+        ),
+      };
+    }
+    case "set_switch": {
+      return {
+        ...scheme,
+        modules: scheme.modules.map((x) =>
+          x.id === action.id && x.kind === "three_way_switch"
+            ? { ...x, switch_position: action.position }
+            : x,
+        ),
+      };
+    }
+    case "set_relay_thresholds": {
+      return {
+        ...scheme,
+        modules: scheme.modules.map((x) =>
+          x.id === action.id && x.kind === "voltage_relay"
+            ? {
+                ...x,
+                u_min_V: action.u_min_V ?? x.u_min_V,
+                u_max_V: action.u_max_V ?? x.u_max_V,
+              }
+            : x,
+        ),
+      };
+    }
+    case "set_source": {
+      return { ...scheme, source: { ...scheme.source, ...action.patch } };
     }
     case "add_wire": {
       const check = canConnect(scheme, action.from, action.to);

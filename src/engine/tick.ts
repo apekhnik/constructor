@@ -1,13 +1,4 @@
-// Engine tick stub. Real implementation lands in Stage 4 (CLAUDE.md §2.5-2.6).
-// Kept here so the UI can already import from this boundary.
+// Re-export of the pure simulation tick. The old stub returned an empty
+// result — Stage 4 replaces it with the real engine in model/simulation.ts.
 
-import type { DiagnosticMessage, Scheme } from "../model/types";
-
-export interface TickResult {
-  scheme: Scheme;
-  diagnostics: DiagnosticMessage[];
-}
-
-export function tick(scheme: Scheme): TickResult {
-  return { scheme, diagnostics: [] };
-}
+export { simulate, type TickResult, type ModuleRuntime } from "../model/simulation";

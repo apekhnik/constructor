@@ -1,6 +1,7 @@
 import { useScheme } from "./SchemeContext";
-import type { ComponentKind } from "../model/types";
-import type { Endpoint, PlacedModule, Wire } from "../model/scheme";
+import { useEngineSnapshot } from "./SimulationContext";
+import type { ComponentKind, TripReason } from "../model/types";
+import type { Endpoint, PlacedModule, SwitchPosition, Wire } from "../model/scheme";
 
 const KIND_LABEL: Record<ComponentKind, string> = {
   source: "Источник",
@@ -80,8 +81,109 @@ function WireSection({ wire }: { wire: Wire }) {
   );
 }
 
+const TRIP_LABEL: Record<NonNullable<TripReason>, string> = {
+  overload: "перегрузка",
+  short_circuit: "короткое замыкание",
+  leak: "утечка тока",
+  overvoltage: "перенапряжение",
+  undervoltage: "пониженное напряжение",
+  no_neutral: "обрыв нуля",
+};
+
+const SWITCH_LABELS: Record<SwitchPosition, string> = {
+  network: "Сеть",
+  off: "0",
+  generator: "Генератор",
+};
+
+function SwitchControl({ m }: { m: PlacedModule }) {
+  const { dispatch } = useScheme();
+  const positions: SwitchPosition[] = ["network", "off", "generator"];
+  return (
+    <div className="mt-[0.5rem] flex flex-col gap-[0.25rem]">
+      <div className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-textDim">
+        положение
+      </div>
+      <div className="flex gap-[0.25rem]">
+        {positions.map((p) => {
+          const selected = (m.switch_position ?? "network") === p;
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() =>
+                dispatch({ type: "set_switch", id: m.id, position: p })
+              }
+              className={`flex-1 border px-[0.5rem] py-[0.4rem] font-mono text-[0.6rem] uppercase tracking-widest transition-colors ${
+                selected
+                  ? "border-bp-cyan bg-bp-cyan/20 text-bp-cyan"
+                  : "border-bp-line bg-bp-surface text-bp-textDim hover:bg-bp-surfaceTop"
+              }`}
+              aria-pressed={selected}
+            >
+              {SWITCH_LABELS[p]}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RelayControl({ m }: { m: PlacedModule }) {
+  const { dispatch } = useScheme();
+  return (
+    <div className="mt-[0.5rem] flex flex-col gap-[0.4rem]">
+      <ThresholdInput
+        label="нижний порог Umin"
+        value={m.u_min_V ?? 180}
+        min={100}
+        max={210}
+        onChange={(v) =>
+          dispatch({ type: "set_relay_thresholds", id: m.id, u_min_V: v })
+        }
+      />
+      <ThresholdInput
+        label="верхний порог Umax"
+        value={m.u_max_V ?? 250}
+        min={240}
+        max={290}
+        onChange={(v) =>
+          dispatch({ type: "set_relay_thresholds", id: m.id, u_max_V: v })
+        }
+      />
+    </div>
+  );
+}
+
+function ThresholdInput(props: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-[0.5rem]">
+      <span className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-textDim">
+        {props.label}
+      </span>
+      <input
+        type="number"
+        min={props.min}
+        max={props.max}
+        value={props.value}
+        onChange={(e) => props.onChange(Number(e.target.value))}
+        className="w-[4.5rem] border border-bp-line bg-bp-surface px-[0.4rem] py-[0.2rem] text-right font-mono text-[0.7rem] text-bp-text"
+      />
+    </label>
+  );
+}
+
 function ModuleSection({ m }: { m: PlacedModule }) {
   const { dispatch } = useScheme();
+  const { runtime } = useEngineSnapshot();
+  const rt = runtime[m.id];
   const isFixture = m.kind === "source";
   return (
     <div className="flex flex-col gap-[0.5rem]">
@@ -126,21 +228,54 @@ function ModuleSection({ m }: { m: PlacedModule }) {
           <Row label="утечка" value={`${m.rated_leak_mA} мА`} />
         )}
         <Row label="спецификация" value={m.spec} />
+
+        {rt && !isFixture && (
+          <>
+            <Row
+              label="вход / выход"
+              value={`${rt.voltage_in_V.toFixed(0)} В / ${rt.voltage_out_V.toFixed(0)} В`}
+            />
+            <Row label="ток" value={`${rt.current_A.toFixed(2)} A`} />
+            {rt.trip_pending && (
+              <Row
+                label="ожидание срабатывания"
+                value={`${TRIP_LABEL[rt.trip_pending.reason ?? "overload"]} · ~${(rt.trip_pending.delay_ms / 1000).toFixed(0)} с`}
+              />
+            )}
+          </>
+        )}
+        {m.tripped && m.trip_reason && (
+          <Row label="авария" value={TRIP_LABEL[m.trip_reason]} />
+        )}
       </div>
 
+      {m.kind === "three_way_switch" && <SwitchControl m={m} />}
+      {m.kind === "voltage_relay" && <RelayControl m={m} />}
+
       <div className="mt-[0.5rem] flex gap-[0.5rem]">
-        <button
-          type="button"
-          onClick={() => dispatch({ type: "toggle_on", id: m.id })}
-          className={`flex-1 border px-[0.65rem] py-[0.45rem] font-mono text-[0.6rem] uppercase tracking-widest transition-colors ${
-            m.on
-              ? "border-bp-ok bg-bp-ok/10 text-bp-ok hover:bg-bp-ok/20"
-              : "border-bp-line bg-bp-surface text-bp-textDim hover:bg-bp-surfaceTop"
-          }`}
-          aria-pressed={m.on}
-        >
-          Рычаг · {m.on ? "ON" : "OFF"}
-        </button>
+        {!isFixture && (
+          <button
+            type="button"
+            onClick={() => dispatch({ type: "toggle_on", id: m.id })}
+            className={`flex-1 border px-[0.65rem] py-[0.45rem] font-mono text-[0.6rem] uppercase tracking-widest transition-colors ${
+              m.on
+                ? "border-bp-ok bg-bp-ok/10 text-bp-ok hover:bg-bp-ok/20"
+                : "border-bp-line bg-bp-surface text-bp-textDim hover:bg-bp-surfaceTop"
+            }`}
+            aria-pressed={m.on}
+          >
+            Рычаг · {m.on ? "ON" : "OFF"}
+          </button>
+        )}
+        {m.tripped && (
+          <button
+            type="button"
+            onClick={() => dispatch({ type: "reset_trip", id: m.id })}
+            className="flex-1 border border-bp-warn px-[0.65rem] py-[0.45rem] font-mono text-[0.6rem] uppercase tracking-widest text-bp-warn transition-colors hover:bg-bp-warn/15"
+          >
+            Сбросить
+          </button>
+        )}
         <button
           type="button"
           onClick={() => dispatch({ type: "select", id: null })}

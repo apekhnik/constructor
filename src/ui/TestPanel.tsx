@@ -1,11 +1,17 @@
-// Static test panel: visual placeholders for Stage 2.
-// Real wiring into the engine lands in Stage 4 (CLAUDE.md §3.2).
+// Live test panel — drives source state and simulated faults (CLAUDE.md §2.1).
 
-const DEFAULT_VOLTAGE_V = 230;
+import { useScheme } from "./SchemeContext";
+
+const VOLTAGE_MAX_V = 300;
+const LEAK_TEST_MA = 50;
 
 export function TestPanel() {
-  const voltage_V = DEFAULT_VOLTAGE_V;
-  const pct = Math.min(100, Math.max(0, (voltage_V / 300) * 100));
+  const { scheme, dispatch } = useScheme();
+  const src = scheme.source;
+  const voltage_V = src.grid_voltage_V;
+
+  const firstLoad = scheme.modules.find((m) => m.kind === "load");
+  const leakActive = src.leak_mA > 0 && src.leak_target_id !== null;
 
   return (
     <section className="flex h-[7.5rem] shrink-0 items-stretch gap-[1.5rem] border-t border-bp-line bg-bp-surfaceTop px-[1.5rem] py-[1rem]">
@@ -18,16 +24,22 @@ export function TestPanel() {
             {voltage_V} В
           </span>
         </div>
-        <div className="relative h-[0.4rem] rounded-[1px] bg-bp-surface" aria-hidden>
-          <div
-            className="absolute left-0 top-0 h-full rounded-[1px] bg-bp-cyan"
-            style={{ width: `${pct}%` }}
-          />
-          <div
-            className="absolute top-[-0.25rem] h-[0.9rem] w-[0.2rem] bg-bp-text"
-            style={{ left: `calc(${pct}% - 0.1rem)` }}
-          />
-        </div>
+        <input
+          type="range"
+          min={0}
+          max={VOLTAGE_MAX_V}
+          step={1}
+          value={voltage_V}
+          onChange={(e) =>
+            dispatch({
+              type: "set_source",
+              patch: { grid_voltage_V: Number(e.target.value) },
+            })
+          }
+          aria-label="Напряжение сети"
+          className="h-[0.9rem] w-full accent-bp-cyan"
+          style={{ accentColor: "var(--color-bp-cyan)" }}
+        />
         <div className="flex justify-between font-mono text-[0.5rem] tracking-widest text-bp-textMuted">
           <span>0 В</span>
           <span>170 В</span>
@@ -42,21 +54,47 @@ export function TestPanel() {
           тестовые воздействия
         </div>
         <div className="flex flex-wrap gap-[0.5rem]">
-          {[
-            { label: "утечка 45 мА", tone: "border-bp-err text-bp-err" },
-            { label: "обрыв N", tone: "border-bp-warn text-bp-warn" },
-            { label: "КЗ на корпус", tone: "border-bp-err text-bp-err" },
-            { label: "генератор", tone: "border-bp-cyan text-bp-cyan" },
-          ].map((b) => (
-            <button
-              key={b.label}
-              type="button"
-              disabled
-              className={`border ${b.tone} px-[0.65rem] py-[0.4rem] font-mono text-[0.6rem] uppercase tracking-widest opacity-50 cursor-not-allowed`}
-            >
-              {b.label}
-            </button>
-          ))}
+          <Toggle
+            label={`утечка ${LEAK_TEST_MA} мА`}
+            active={leakActive}
+            disabled={!firstLoad}
+            tone="err"
+            onClick={() => {
+              if (leakActive) {
+                dispatch({
+                  type: "set_source",
+                  patch: { leak_mA: 0, leak_target_id: null },
+                });
+              } else if (firstLoad) {
+                dispatch({
+                  type: "set_source",
+                  patch: { leak_mA: LEAK_TEST_MA, leak_target_id: firstLoad.id },
+                });
+              }
+            }}
+          />
+          <Toggle
+            label="обрыв N"
+            active={src.neutral_break}
+            tone="warn"
+            onClick={() =>
+              dispatch({
+                type: "set_source",
+                patch: { neutral_break: !src.neutral_break },
+              })
+            }
+          />
+          <Toggle
+            label="генератор"
+            active={src.gen_active}
+            tone="cyan"
+            onClick={() =>
+              dispatch({
+                type: "set_source",
+                patch: { gen_active: !src.gen_active },
+              })
+            }
+          />
         </div>
       </div>
 
@@ -66,13 +104,56 @@ export function TestPanel() {
         </div>
         <button
           type="button"
-          disabled
-          className="border border-bp-line bg-bp-surface/60 px-[1.25rem] py-[0.65rem] font-mono text-[0.7rem] font-semibold uppercase tracking-widest text-bp-textDim opacity-60 cursor-not-allowed"
-          title="Появится на Этапе 4"
+          onClick={() =>
+            dispatch({
+              type: "set_source",
+              patch: { grid_active: !src.grid_active },
+            })
+          }
+          className={`border px-[1.25rem] py-[0.65rem] font-mono text-[0.7rem] font-semibold uppercase tracking-widest transition-colors ${
+            src.grid_active
+              ? "border-bp-ok bg-bp-ok/15 text-bp-ok hover:bg-bp-ok/25"
+              : "border-bp-line bg-bp-surface/60 text-bp-textDim hover:bg-bp-surface"
+          }`}
+          aria-pressed={src.grid_active}
         >
-          ▶ подать питание · Э4
+          {src.grid_active ? "▌ снять питание" : "▶ подать питание"}
         </button>
       </div>
     </section>
+  );
+}
+
+const TONE_CLASS: Record<"err" | "warn" | "cyan", string> = {
+  err: "border-bp-err text-bp-err",
+  warn: "border-bp-warn text-bp-warn",
+  cyan: "border-bp-cyan text-bp-cyan",
+};
+const TONE_ACTIVE: Record<"err" | "warn" | "cyan", string> = {
+  err: "bg-bp-err/20",
+  warn: "bg-bp-warn/20",
+  cyan: "bg-bp-cyan/20",
+};
+
+interface ToggleProps {
+  label: string;
+  active: boolean;
+  disabled?: boolean;
+  tone: "err" | "warn" | "cyan";
+  onClick: () => void;
+}
+
+function Toggle({ label, active, disabled, tone, onClick }: ToggleProps) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`border ${TONE_CLASS[tone]} ${active ? TONE_ACTIVE[tone] : "bg-transparent"} px-[0.65rem] py-[0.4rem] font-mono text-[0.6rem] uppercase tracking-widest transition-colors ${disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-bp-surface"}`}
+      aria-pressed={active}
+    >
+      {active ? "● " : "○ "}
+      {label}
+    </button>
   );
 }

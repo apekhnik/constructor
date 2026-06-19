@@ -2,6 +2,7 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { useDraggable, useDroppable, useDndMonitor } from "@dnd-kit/core";
 import { DinModule } from "./DinModule";
 import { useScheme } from "./SchemeContext";
+import { useEngineSnapshot } from "./SimulationContext";
 import { isPaletteDrag, isRailDrag, type DraggableData } from "./dnd";
 import { terminalsFor } from "../model/terminals";
 import {
@@ -263,6 +264,7 @@ function SupplyLayer() {
 
 function LoadBox({ m }: { m: PlacedModule }) {
   const { scheme, dispatch } = useScheme();
+  const { runtime } = useEngineSnapshot();
   const data: DraggableData = { source: "rail", moduleId: m.id };
   const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
     id: `module-${m.id}`,
@@ -270,6 +272,8 @@ function LoadBox({ m }: { m: PlacedModule }) {
   });
   const selected = scheme.selectedId === m.id;
   const widthRem = moduleWidthRem(m.poles);
+  const rt = runtime[m.id];
+  const lit = rt?.lit ?? false;
   return (
     <div
       ref={setNodeRef}
@@ -287,12 +291,17 @@ function LoadBox({ m }: { m: PlacedModule }) {
           dispatch({ type: "remove", id: m.id });
         }
       }}
-      className={`relative cursor-grab rounded-[3px] border border-bp-line bg-bp-surface outline-none transition-shadow ${
+      className={`relative cursor-grab rounded-[3px] border outline-none transition-shadow ${
+        lit
+          ? "border-bp-ok bg-bp-ok/15"
+          : "border-bp-line bg-bp-surface"
+      } ${
         selected ? "ring-2 ring-bp-cyan ring-offset-2 ring-offset-bp-bg" : ""
       } ${isDragging ? "opacity-30" : ""}`}
       style={{
         width: `${widthRem}rem`,
         height: `${LOAD_MODULE_HEIGHT_REM}rem`,
+        boxShadow: lit ? "0 0 1rem rgba(80,220,140,.45)" : undefined,
       }}
       aria-label={m.label}
       aria-pressed={selected}
@@ -301,8 +310,8 @@ function LoadBox({ m }: { m: PlacedModule }) {
         <span className="font-mono text-[0.5rem] uppercase tracking-widest text-bp-textDim">
           {m.label}
         </span>
-        <span className="font-mono text-[0.7rem] font-bold text-bp-text">
-          {m.rated_current_A ?? 0} A
+        <span className={`font-mono text-[0.7rem] font-bold ${lit ? "text-bp-ok" : "text-bp-text"}`}>
+          {lit ? `${(rt?.voltage_in_V ?? 0).toFixed(0)} В` : `${m.rated_current_A ?? 0} A`}
         </span>
       </div>
     </div>

@@ -16,12 +16,24 @@ import { TestPanel } from "./ui/TestPanel";
 import { Inspector } from "./ui/Inspector";
 import { DinModule } from "./ui/DinModule";
 import { SchemeProvider, useScheme } from "./ui/SchemeContext";
+import { SimulationProvider, useEngineSnapshot } from "./ui/SimulationContext";
 import { isPaletteDrag, isRailDrag, type DraggableData } from "./ui/dnd";
 import {
   canPlace,
   makePlacedFromCatalog,
   type PlacedModule,
 } from "./model/scheme";
+import type { DiagnosticMessage } from "./model/types";
+import type { LogEntry } from "./ui/state";
+
+function toLogEntries(diags: DiagnosticMessage[]): LogEntry[] {
+  return diags.map((d) => ({
+    severity: d.severity,
+    code: d.code,
+    text: d.message_full,
+    componentId: d.related_components[0],
+  }));
+}
 
 function Header({ moduleCount }: { moduleCount: number }) {
   return (
@@ -62,6 +74,7 @@ function Header({ moduleCount }: { moduleCount: number }) {
 
 function Shell() {
   const { scheme, dispatch } = useScheme();
+  const { diagnostics } = useEngineSnapshot();
   const [overlayDrag, setOverlayDrag] = useState<DraggableData | null>(null);
 
   const sensors = useSensors(
@@ -189,7 +202,7 @@ function Shell() {
           </main>
           <aside className="flex h-full w-[20rem] shrink-0 flex-col border-l border-bp-line bg-bp-surfaceTransparent">
             <Inspector />
-            <LogPanel entries={[]} />
+            <LogPanel entries={toLogEntries(diagnostics)} />
           </aside>
         </div>
       </div>
@@ -202,7 +215,9 @@ function Shell() {
 export default function App() {
   return (
     <SchemeProvider>
-      <Shell />
+      <SimulationProvider>
+        <Shell />
+      </SimulationProvider>
     </SchemeProvider>
   );
 }
