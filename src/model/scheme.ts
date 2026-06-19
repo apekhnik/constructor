@@ -1,11 +1,17 @@
-// Editable scheme state — source of truth for module layout on the rails.
-// Engine/wires/simulation come later; here we only track placement.
+// Editable scheme state — source of truth for module layout and wiring.
 
 import type { CatalogEntry } from "./catalog";
+import { terminalsFor } from "./terminals";
 import type { BreakerCurve, ComponentKind, TripReason } from "./types";
 
 export const SLOTS_PER_RAIL = 12;
 export const RAIL_COUNT = 2;
+export const SUPPLY_RAIL_INDEX = 0;
+export const LOAD_RAIL_INDEX = 3;
+export const LOAD_SLOTS = 12;
+
+// Built-in grid source fixture id — present in every scheme.
+export const GRID_SOURCE_ID = "fixture_grid_source";
 
 export interface PlacedModule {
   id: string;
@@ -16,22 +22,55 @@ export interface PlacedModule {
   curve?: BreakerCurve;
   rated_leak_mA?: number;
   poles: 1 | 2;
-  rail: number; // 1..RAIL_COUNT
-  slot: number; // 0..SLOTS_PER_RAIL-1 (left edge for 2-pole)
+  rail: number;
+  slot: number;
   on: boolean;
   tripped: boolean;
   trip_reason: TripReason;
 }
 
-export interface Scheme {
-  modules: PlacedModule[];
-  selectedId: string | null;
+export type Endpoint =
+  | { kind: "module"; moduleId: string; terminalId: string }
+  | { kind: "bus"; bus: "L" | "N" | "PE"; tapIndex: number };
+
+export interface Wire {
+  id: string;
+  conductor: "L" | "N" | "PE";
+  from: Endpoint;
+  to: Endpoint;
 }
 
-export const emptyScheme = (): Scheme => ({ modules: [], selectedId: null });
+export interface Scheme {
+  modules: PlacedModule[];
+  wires: Wire[];
+  selectedId: string | null;
+  selectedWireId: string | null;
+  pendingFrom: Endpoint | null;
+}
 
-// Not every catalog kind belongs on a DIN rail in MVP.
-// Buses and loads come in Stage 3 with the wiring layer.
+function gridSourceFixture(): PlacedModule {
+  return {
+    id: GRID_SOURCE_ID,
+    kind: "source",
+    label: "Ввод сети",
+    spec: "230 В · 50 Гц",
+    poles: 2,
+    rail: SUPPLY_RAIL_INDEX,
+    slot: 5,
+    on: true,
+    tripped: false,
+    trip_reason: null,
+  };
+}
+
+export const emptyScheme = (): Scheme => ({
+  modules: [gridSourceFixture()],
+  wires: [],
+  selectedId: null,
+  selectedWireId: null,
+  pendingFrom: null,
+});
+
 const RAIL_PLACEABLE: ReadonlySet<ComponentKind> = new Set([
   "main_breaker",
   "rcd",
@@ -44,9 +83,23 @@ const RAIL_PLACEABLE: ReadonlySet<ComponentKind> = new Set([
 export const isRailPlaceable = (kind: ComponentKind): boolean =>
   RAIL_PLACEABLE.has(kind);
 
+// Which rails (1, 2 = DIN, 3 = loads, 0 = supply) accept this kind from the palette?
+export function placementRailsFor(kind: ComponentKind): number[] {
+  if (kind === "load") return [LOAD_RAIL_INDEX];
+  if (RAIL_PLACEABLE.has(kind)) return [1, 2];
+  return [];
+}
+
+export const isPlaceable = (kind: ComponentKind): boolean =>
+  placementRailsFor(kind).length > 0;
+
+function railSlotCount(rail: number): number {
+  return rail === LOAD_RAIL_INDEX ? LOAD_SLOTS : SLOTS_PER_RAIL;
+}
+
 let _seq = 0;
-const newId = (): string =>
-  `m_${Date.now().toString(36)}_${(++_seq).toString(36)}`;
+const newId = (prefix: string): string =>
+  `${prefix}_${Date.now().toString(36)}_${(++_seq).toString(36)}`;
 
 export const moduleWidth = (poles: 1 | 2): number => (poles === 2 ? 2 : 1);
 
@@ -68,8 +121,9 @@ export function canPlace(
   slot: number,
   ignoreId?: string,
 ): boolean {
-  if (rail < 1 || rail > RAIL_COUNT) return false;
-  if (slot < 0 || slot + moduleWidth(poles) > SLOTS_PER_RAIL) return false;
+  // Supply zone (rail 0) is reserved for the built-in source — no manual drops.
+  if (rail !== LOAD_RAIL_INDEX && (rail < 1 || rail > RAIL_COUNT)) return false;
+  if (slot < 0 || slot + moduleWidth(poles) > railSlotCount(rail)) return false;
   const taken = takenSlots(scheme, ignoreId);
   for (let i = 0; i < moduleWidth(poles); i++) {
     if (taken.has(`${rail}:${slot + i}`)) return false;
@@ -95,7 +149,7 @@ export function makePlacedFromCatalog(
 ): PlacedModule {
   const poles = (entry.poles ?? 1) as 1 | 2;
   return {
-    id: newId(),
+    id: newId("m"),
     kind: entry.kind,
     label: entry.name,
     spec: entry.spec,
@@ -111,6 +165,68 @@ export function makePlacedFromCatalog(
   };
 }
 
+// --- Wires ---
+
+export function endpointKey(ep: Endpoint): string {
+  if (ep.kind === "bus") return `bus:${ep.bus}:${ep.tapIndex}`;
+  return `mod:${ep.moduleId}:${ep.terminalId}`;
+}
+
+export function endpointConductor(
+  ep: Endpoint,
+  modules: PlacedModule[],
+): "L" | "N" | "PE" | null {
+  if (ep.kind === "bus") return ep.bus;
+  const m = modules.find((x) => x.id === ep.moduleId);
+  if (!m) return null;
+  const t = terminalsFor(m.kind).find((tt) => tt.id === ep.terminalId);
+  return t?.conductor ?? null;
+}
+
+export function isEndpointOccupied(ep: Endpoint, wires: Wire[]): boolean {
+  const k = endpointKey(ep);
+  return wires.some(
+    (w) => endpointKey(w.from) === k || endpointKey(w.to) === k,
+  );
+}
+
+export interface ConnectCheck {
+  ok: boolean;
+  reason?: string;
+}
+
+export function canConnect(
+  scheme: Scheme,
+  a: Endpoint,
+  b: Endpoint,
+): ConnectCheck {
+  if (endpointKey(a) === endpointKey(b)) {
+    return { ok: false, reason: "Та же клемма" };
+  }
+  if (
+    a.kind === "module" &&
+    b.kind === "module" &&
+    a.moduleId === b.moduleId
+  ) {
+    return { ok: false, reason: "Петля на тот же модуль" };
+  }
+  const cA = endpointConductor(a, scheme.modules);
+  const cB = endpointConductor(b, scheme.modules);
+  if (!cA || !cB) {
+    return { ok: false, reason: "Неизвестная клемма" };
+  }
+  if (cA !== cB) {
+    return { ok: false, reason: `Несовместимые проводники: ${cA} ↔ ${cB}` };
+  }
+  if (isEndpointOccupied(a, scheme.wires)) {
+    return { ok: false, reason: "Первая клемма уже занята" };
+  }
+  if (isEndpointOccupied(b, scheme.wires)) {
+    return { ok: false, reason: "Клемма уже занята" };
+  }
+  return { ok: true };
+}
+
 // --- Reducer ---
 
 export type SchemeAction =
@@ -119,11 +235,25 @@ export type SchemeAction =
   | { type: "remove"; id: string }
   | { type: "select"; id: string | null }
   | { type: "toggle_on"; id: string }
+  | { type: "add_wire"; from: Endpoint; to: Endpoint }
+  | { type: "remove_wire"; id: string }
+  | { type: "select_wire"; id: string | null }
+  | { type: "set_pending"; ep: Endpoint | null }
   | { type: "clear" };
+
+function removeWiresAttachedTo(wires: Wire[], moduleId: string): Wire[] {
+  return wires.filter(
+    (w) =>
+      !(w.from.kind === "module" && w.from.moduleId === moduleId) &&
+      !(w.to.kind === "module" && w.to.moduleId === moduleId),
+  );
+}
 
 export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
   switch (action.type) {
     case "place": {
+      const acceptedRails = placementRailsFor(action.entry.kind);
+      if (!acceptedRails.includes(action.rail)) return scheme;
       const poles = (action.entry.poles ?? 1) as 1 | 2;
       if (!canPlace(scheme, poles, action.rail, action.slot)) return scheme;
       const placed = makePlacedFromCatalog(
@@ -135,11 +265,15 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
         ...scheme,
         modules: [...scheme.modules, placed],
         selectedId: placed.id,
+        selectedWireId: null,
+        pendingFrom: null,
       };
     }
     case "move": {
       const m = scheme.modules.find((x) => x.id === action.id);
       if (!m) return scheme;
+      if (m.kind === "source") return scheme; // source is a fixture
+      if (m.rail !== action.rail) return scheme; // can't move across zones
       if (!canPlace(scheme, m.poles, action.rail, action.slot, m.id))
         return scheme;
       return {
@@ -150,14 +284,23 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
       };
     }
     case "remove": {
+      const target = scheme.modules.find((x) => x.id === action.id);
+      if (target?.kind === "source") return scheme; // can't delete the source
       return {
         ...scheme,
         modules: scheme.modules.filter((x) => x.id !== action.id),
+        wires: removeWiresAttachedTo(scheme.wires, action.id),
         selectedId: scheme.selectedId === action.id ? null : scheme.selectedId,
+        pendingFrom: null,
       };
     }
     case "select": {
-      return { ...scheme, selectedId: action.id };
+      return {
+        ...scheme,
+        selectedId: action.id,
+        selectedWireId: action.id ? null : scheme.selectedWireId,
+        pendingFrom: null,
+      };
     }
     case "toggle_on": {
       return {
@@ -166,6 +309,44 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
           x.id === action.id ? { ...x, on: !x.on } : x,
         ),
       };
+    }
+    case "add_wire": {
+      const check = canConnect(scheme, action.from, action.to);
+      if (!check.ok) return scheme;
+      const conductor = endpointConductor(action.from, scheme.modules);
+      if (!conductor) return scheme;
+      const wire: Wire = {
+        id: newId("w"),
+        conductor,
+        from: action.from,
+        to: action.to,
+      };
+      return {
+        ...scheme,
+        wires: [...scheme.wires, wire],
+        selectedWireId: wire.id,
+        selectedId: null,
+        pendingFrom: null,
+      };
+    }
+    case "remove_wire": {
+      return {
+        ...scheme,
+        wires: scheme.wires.filter((w) => w.id !== action.id),
+        selectedWireId:
+          scheme.selectedWireId === action.id ? null : scheme.selectedWireId,
+      };
+    }
+    case "select_wire": {
+      return {
+        ...scheme,
+        selectedWireId: action.id,
+        selectedId: action.id ? null : scheme.selectedId,
+        pendingFrom: null,
+      };
+    }
+    case "set_pending": {
+      return { ...scheme, pendingFrom: action.ep };
     }
     case "clear": {
       return emptyScheme();

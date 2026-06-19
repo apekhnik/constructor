@@ -73,20 +73,46 @@ function Shell() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key === "Delete" || e.key === "Backspace") && scheme.selectedId) {
-        const target = e.target as HTMLElement | null;
-        const tag = target?.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA") return;
-        e.preventDefault();
-        dispatch({ type: "remove", id: scheme.selectedId });
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const inField = tag === "INPUT" || tag === "TEXTAREA";
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (inField) return;
+        if (scheme.selectedWireId) {
+          e.preventDefault();
+          dispatch({ type: "remove_wire", id: scheme.selectedWireId });
+          return;
+        }
+        if (scheme.selectedId) {
+          e.preventDefault();
+          dispatch({ type: "remove", id: scheme.selectedId });
+        }
+        return;
       }
-      if (e.key === "Escape" && scheme.selectedId) {
-        dispatch({ type: "select", id: null });
+
+      if (e.key === "Escape") {
+        if (scheme.pendingFrom) {
+          dispatch({ type: "set_pending", ep: null });
+          return;
+        }
+        if (scheme.selectedWireId) {
+          dispatch({ type: "select_wire", id: null });
+          return;
+        }
+        if (scheme.selectedId) {
+          dispatch({ type: "select", id: null });
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [scheme.selectedId, dispatch]);
+  }, [
+    scheme.selectedId,
+    scheme.selectedWireId,
+    scheme.pendingFrom,
+    dispatch,
+  ]);
 
   const handleDragStart = (e: DragStartEvent) => {
     const data = e.active.data.current as DraggableData | undefined;

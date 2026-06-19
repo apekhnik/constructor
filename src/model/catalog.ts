@@ -76,25 +76,12 @@ export const CATALOG: CatalogEntry[] = [
     curve: "B",
   },
   {
-    kind: "bus_din",
-    group: "infra",
-    name: "Шина L (DIN)",
-    spec: "распределение фазы",
-    toneVarName: "wire-L",
-  },
-  {
-    kind: "bus_n",
-    group: "infra",
-    name: "Шина N",
-    spec: "общий ноль",
-    toneVarName: "wire-N",
-  },
-  {
     kind: "load",
     group: "infra",
     name: "Нагрузка / лампа",
     spec: "пресет 0.5 A",
     toneVarName: "bp-textDim",
+    poles: 2,
     rated_current_A: 0.5,
   },
 ];

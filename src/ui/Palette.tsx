@@ -1,6 +1,6 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CATALOG, type CatalogEntry } from "../model/catalog";
-import { isRailPlaceable } from "../model/scheme";
+import { isPlaceable } from "../model/scheme";
 import type { DraggableData } from "./dnd";
 
 const TONE_CLASS: Record<string, string> = {
@@ -31,7 +31,7 @@ function MiniModule() {
 }
 
 function PaletteRow({ entry }: { entry: CatalogEntry }) {
-  const placeable = isRailPlaceable(entry.kind);
+  const placeable = isPlaceable(entry.kind);
   const data: DraggableData = { source: "palette", entry };
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({

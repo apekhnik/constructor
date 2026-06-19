@@ -1,73 +1,155 @@
-# React + TypeScript + Vite
+# Интерактивный конструктор электрощита
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Веб-приложение (одна страница, React + Vite, всё на клиенте) для сборки
+однолинейной схемы электрощита. Пользователь перетаскивает компоненты на
+DIN-рейку, соединяет клеммы проводами и наблюдает логику работы аппаратов
+защиты (автомат, УЗО, дифавтомат, реле напряжения, 3-позиционный
+переключатель Сеть-0-Генератор).
 
-Currently, two official plugins are available:
+Цель — обучение: понять, что реальные ошибки сборки приводят к реальным
+последствиям. Это **не SPICE-симулятор**, а логический симулятор уровня
+"сработает / не сработает", основанный на физических принципах
+аппаратов защиты.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+> Полное ТЗ (электротехническая модель, правила соединений, логика
+> срабатывания защит) — в локальном файле `CLAUDE.md` (не в git, лежит у
+> владельца). Этот README — про код и состояние работ.
 
-## React Compiler
+## Запуск
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev      # http://localhost:5173
+npm run build    # tsc -b && vite build
+npm run lint
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Зависимости: React 19, Vite 8, Tailwind 3, `@dnd-kit/core`. TypeScript
+strict. Node ≥ 20.19 рекомендуется.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Архитектура
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Разделение по слоям сделано осознанно, чтобы движок симуляции (когда
+появится) можно было разрабатывать отдельно от UI:
+
+- **`src/model/`** — чистые данные и pure-функции, без DOM:
+  - `types.ts` — базовые типы (`ComponentKind`, `TerminalRole`, ...)
+  - `catalog.ts` — палитра компонентов
+  - `terminals.ts` — клеммы каждого типа (id, conductor, side)
+  - `scheme.ts` — store раскладки + reducer (place/move/remove/wires/select)
+  - `layout.ts` — геометрия (slot pitch, координаты клемм и шин)
+- **`src/engine/`** — обёртка вокруг model (tick-loop, таймеры
+  срабатывания, реактивный API). Сейчас пустая заглушка `tick.ts` —
+  основная работа Этапа 4.
+- **`src/ui/`** — визуальный слой:
+  - `App.tsx` — оболочка + `DndContext` + горячие клавиши (Esc/Del)
+  - `Palette.tsx` — палитра с draggable строками
+  - `Workspace.tsx` — рабочая зона: supply / 2 DIN-рейки / шины L,N,PE /
+    зона нагрузок + SVG-оверлей с проводами и клеммами
+  - `DinModule.tsx` — визуал модульного аппарата
+  - `Inspector.tsx` — правая панель параметров модуля или провода
+  - `LogPanel.tsx`, `TestPanel.tsx` — лог и тестовые воздействия
+    (оживут на Этапах 4-5)
+  - `SchemeContext.tsx` — Context-провайдер для scheme + dispatch
+  - `dnd.ts` — типы payload'ов для `@dnd-kit`
+
+## Что сделано
+
+### Этап 1 — Визуальный костяк ✅
+Скаффолд, дизайн-токены, шапка, палитра, две DIN-рейки, шины, лог,
+тест-панель. На этом этапе использовались статичные mock-состояния
+(норма / утечка / ошибка / перенапряжение) — они удалены при переходе
+к редактируемой раскладке.
+
+### Этап 2 — Drag-and-drop сборки щита ✅
+- Реальный store раскладки (`model/scheme.ts`) с reducer (`place`,
+  `move`, `remove`, `select`, `toggle_on`)
+- 12 слотов на рейку, 2-полюсные модули занимают 2 слота
+- `canPlace` валидирует границы и пересечения
+- DnD на `@dnd-kit/core` с `PointerSensor` + `KeyboardSensor`,
+  `DragOverlay` для ghost-превью
+- Inspector справа с параметрами выбранного модуля + Удалить + ON/OFF
+- Глобальный Del/Backspace удаляет выбранное, Esc снимает выбор
+
+### Этап 3 — Соединение проводами + структурные правила ✅
+- `model/terminals.ts` — клеммы per kind с conductor L/N/PE и стороной
+  top/bottom
+- `model/layout.ts` — вся геометрия в pure-функциях. Терминалы и шины
+  имеют координаты в rem, выводятся без замеров DOM
+- `model/scheme.ts` дополнен:
+  - `Wire`, `Endpoint` (module-terminal или bus-tap)
+  - Reducer: `add_wire`, `remove_wire`, `select_wire`, `set_pending`
+  - `canConnect` — структурные блоки: same key, self-loop на тот же
+    модуль, mismatch проводника (L↔N, L↔PE и т.д.), занятая клемма
+  - Удаление модуля чистит привязанные провода
+- Встроенные шины L/N/PE между рядами, по 12 tap-точек каждая
+- Встроенный источник «Ввод сети 230 В» в `emptyScheme` (фикстура,
+  нельзя перенести/удалить)
+- Зона нагрузок снизу, 12 слотов, `Нагрузка / лампа` draggable из
+  палитры
+- Zone-aware подсветка слотов: автомат не подсветит слоты нагрузок и
+  наоборот
+- SVG WiringLayer: провода как Manhattan-полилинии (вертикаль /
+  горизонталь / вертикаль), цвет по проводнику, click-выбор + Del
+- Click-click flow создания провода: первый клик ставит `pendingFrom`,
+  валидные мишени светятся cyan, занятые/несовместимые — приглушены;
+  второй валидный клик коммитит провод; Esc отменяет
+- Inspector показывает либо модуль, либо провод (откуда → куда +
+  Удалить); скрывает «Удалить» у source
+
+### Отложено как nice-to-have
+- Drag-from-terminal как альтернатива click-click — оставлено на Этап 6
+- Генератор как второй источник + структурная проверка «два источника
+  без 3-way switch» — придёт в Этап 4 вместе с симуляцией
+
+## Что дальше
+
+### Этап 4 — Модель и движок симуляции (CLAUDE.md §2.5, §2.6)
+Самый объёмный этап. Предлагаемое разбиение на под-этапы:
+
+1. **Граф и замкнутость** — построить граф из wires, для каждой нагрузки
+   определить, замкнута ли цепь L+N от того же источника
+2. **Расчёт токов** — суммировать номинальные токи нагрузок вниз по
+   дереву от каждого аппарата
+3. **Логика срабатывания**:
+   - Автомат: тепловой расцепитель (k=1.45-3) с задержкой,
+     электромагнитный (B: ≥3, C: ≥5, D: ≥10) почти мгновенно
+   - УЗО / АВДТ: ΔI ≥ номинала → отключение
+   - УЗМ: Umin/Umax с задержками (10 сек на низкое, 0.2 сек на высокое)
+4. **Игровое время** — tick-loop, реальные секунды для коротких
+   задержек, ускоренные для длинных (АПВ 6 мин → 6 сек)
+5. **Логические предупреждения (§2.4)** — УЗО без N в цепи, автомат >
+   УЗО по номиналу, повторное N↔PE после УЗО, нагрузка без PE
+6. **Двухисточниковая проверка** (после добавления генератора) —
+   запрет прямого соединения сеть+генератор без 3-way switch
+7. **Подключение тест-панели**: слайдер напряжения, кнопки утечки,
+   обрыва N, КЗ, «Подать питание»
+
+### Этап 5 — Панель объяснений / обучающий режим
+- Лог из §2.7 (severity → info/warning/error, code, текст)
+- Постоянно видимое «почему сработало» рядом с аварийным модулем
+- Подсказки info («дай автомату остыть», «АПВ через N сек»)
+- Опционально: пошаговые задания
+
+### Этап 6 — Полировка
+- Сохранение/загрузка в localStorage
+- Анимации срабатывания, обратный отсчёт АПВ
+- Drag-from-terminal
+- Финальный QA по сценариям §2.5
+
+## Важные инварианты, которые нельзя сломать
+
+- **Цветовая маркировка проводов по ПУЭ/МЭК** (L коричневый, N синий,
+  PE жёлто-зелёный) — это часть обучающей ценности, не просто стиль
+- **Состояния модулей различимы не только цветом** — иконка / текстовая
+  подпись дублирует цвет (для доступности)
+- **Постоянное место для "почему сработало"** — пользователь не должен
+  гадать, что значит мигающий красный
+- **DIN-рейка и модули узнаваемо похожи на реальные** (прямоугольные
+  корпуса, рычажки, окошки индикации) — это помогает переносу знаний в
+  реальный монтаж
+- **Source — фикстура**, не подлежит drag/delete; всегда присутствует
+  в `emptyScheme`
+- **Геометрия в pure-функциях** (`model/layout.ts`) — UI и
+  WiringLayer (SVG) обязаны использовать один и тот же источник правды
+  для координат, иначе клеммы и провода рассинхронятся

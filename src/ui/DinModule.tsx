@@ -3,11 +3,9 @@ import { useScheme } from "./SchemeContext";
 import type { DraggableData } from "./dnd";
 import type { PlacedModule } from "../model/scheme";
 import type { ComponentKind } from "../model/types";
+import { moduleWidthRem, SLOT_WIDTH_REM } from "../model/layout";
 
-// Visual DIN module rendered on the rail.
-// In Stage 2 modules are selectable and draggable for re-positioning via @dnd-kit.
-
-export const SLOT_WIDTH_REM = 1.8;
+export { SLOT_WIDTH_REM };
 
 function mainLabel(m: PlacedModule): string {
   if (
@@ -70,7 +68,7 @@ export function DinModule({ m, overlay = false }: DinModuleProps) {
 
   const selected = !overlay && scheme.selectedId === m.id;
   const poles = m.poles;
-  const widthRem = SLOT_WIDTH_REM * (poles === 2 ? 2 : 1);
+  const widthRem = moduleWidthRem(poles);
   const status = statusText(m);
   const hasTest = KIND_HAS_TEST.includes(m.kind);
 
