@@ -10,7 +10,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { Palette } from "./ui/Palette";
-import { Workspace } from "./ui/Workspace";
+import { Workspace, LoadBox } from "./ui/Workspace";
 import { LogPanel } from "./ui/LogPanel";
 import { TestPanel } from "./ui/TestPanel";
 import { Inspector } from "./ui/Inspector";
@@ -253,11 +253,20 @@ function Shell() {
         1,
         0,
       );
-      return <DinModule m={phantom} overlay />;
+      return phantom.kind === "load" ? (
+        <LoadBox m={phantom} overlay />
+      ) : (
+        <DinModule m={phantom} overlay />
+      );
     }
     if (isRailDrag(overlayDrag)) {
       const m = scheme.modules.find((x) => x.id === overlayDrag.moduleId);
-      return m ? <DinModule m={m} overlay /> : null;
+      if (!m) return null;
+      return m.kind === "load" ? (
+        <LoadBox m={m} overlay />
+      ) : (
+        <DinModule m={m} overlay />
+      );
     }
     return null;
   })();

@@ -40,9 +40,9 @@ export const CATALOG: CatalogEntry[] = [
     kind: "voltage_relay",
     group: "input",
     name: "Реле напряжения",
-    spec: "УЗМ-51 · 63A",
+    spec: "УЗМ-51М · 63A",
     toneVarName: "bp-ok",
-    poles: 1,
+    poles: 2,
     rated_current_A: 63,
   },
   {

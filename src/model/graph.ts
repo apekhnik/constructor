@@ -3,7 +3,7 @@
 // source voltage and trip state of the load — only of structural wiring and
 // the current "on/tripped/position" state of each switching module.
 
-import { BUSES, BUS_TAP_COUNT, type BusName } from "./layout";
+import { BUSES, busTapCount, type BusName } from "./layout";
 import type { PlacedModule, Scheme } from "./scheme";
 import { endpointKey, type Endpoint } from "./scheme";
 import { terminalsFor, type TerminalDef } from "./terminals";
@@ -129,7 +129,8 @@ export function buildGraph(
   for (const bus of BUSES) {
     const busId = `bus:${bus}`;
     dsu.add(busId);
-    for (let i = 0; i < BUS_TAP_COUNT; i++) {
+    const taps = busTapCount(bus);
+    for (let i = 0; i < taps; i++) {
       dsu.union(busId, `bus:${bus}:${i}`);
     }
   }
