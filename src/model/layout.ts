@@ -17,7 +17,9 @@ import { terminalsFor, type TerminalDef } from "./terminals";
 // ---------------- Slot grid (DIN modules) ----------------
 
 export const SLOT_WIDTH_REM = 1.8;
-export const SLOT_GAP_REM = 0.25;
+// Wider inter-module gap so vertical wires can run between module bodies
+// instead of crossing them.
+export const SLOT_GAP_REM = 0.6;
 export const SLOT_PITCH_REM = SLOT_WIDTH_REM + SLOT_GAP_REM;
 
 // ---------------- DIN rail section ----------------
@@ -61,7 +63,7 @@ export const PE_BUS_ZONE_HEIGHT_REM = 1.5;
 
 // ---------------- Vertical section stack (small/large share top half) ----------------
 
-export const SECTION_GAP_REM = 0.6;
+export const SECTION_GAP_REM = 1.2;
 
 // Source (СЕТЬ) sits at the very top so its bottom terminals feed straight
 // DOWN into the L/N busses below it.
@@ -142,6 +144,11 @@ export interface Layout {
   busGeometry: Record<BusName, BusGeometry>;
   safeYBands: number[];
   conductorChannelX: Record<"L" | "N" | "PE", number>;
+  // X coordinates of the centres of inter-module gaps along the DIN rail,
+  // including the gaps at the left of slot 0 and right of the last slot.
+  // Used by the lane router to push vertical wire segments out of module
+  // bodies and into the visible gaps.
+  slotGapsX: number[];
 }
 
 export function slotsPerRailFor(mode: PanelMode): number {
@@ -264,6 +271,16 @@ export function getLayout(mode: PanelMode): Layout {
   // and the load column, with PE pushed further out so the (warm) yellow-green
   // stripe doesn't visually merge into the (cool) blue N stripe right next to
   // it.
+  // Inter-module gap centres along the rail. Edge gaps included.
+  const slotGapsX: number[] = [];
+  slotGapsX.push(PANEL_LEFT_PAD_REM - SLOT_GAP_REM / 2);
+  for (let k = 1; k < slotsPerRail; k++) {
+    slotGapsX.push(PANEL_LEFT_PAD_REM + k * SLOT_PITCH_REM - SLOT_GAP_REM / 2);
+  }
+  slotGapsX.push(
+    PANEL_LEFT_PAD_REM + slotsPerRail * SLOT_PITCH_REM - SLOT_GAP_REM / 2,
+  );
+
   const conductorChannelX: Record<"L" | "N" | "PE", number> = {
     L: PANEL_LEFT_PAD_REM - SIDE_LANE_MARGIN_REM,
     N: PANEL_LEFT_PAD_REM + panelWidthRem + SIDE_LANE_MARGIN_REM,
@@ -285,6 +302,7 @@ export function getLayout(mode: PanelMode): Layout {
     busGeometry,
     safeYBands,
     conductorChannelX,
+    slotGapsX,
   };
 }
 
@@ -386,6 +404,107 @@ export function busTapPosition(
       ? g.y - TERMINAL_OFFSET_REM
       : g.y + g.thickness + TERMINAL_OFFSET_REM;
   return { x, y };
+}
+
+// ---------------- Lane-based routing (per-wire Y-track) ----------------
+
+// Vertical spacing between adjacent wires in the same safe band. Picked so that
+// 5–6 wires fit comfortably inside the smallest safeYBand.
+export const LANE_STEP_REM = 0.4;
+
+// Minimum vertical distance between a terminal and the nearest lane Y. The
+// lane router clamps `laneY` so each side has at least this much "lift" out
+// of the screw cap — otherwise the horizontal segment would visually sit on
+// the terminal dot.
+export const LANE_LIFT_REM = 0.5;
+
+// Pick the gap-centre X closest to `x` from the precomputed list.
+export function nearestGapX(x: number, slotGapsX: number[]): number {
+  if (slotGapsX.length === 0) return x;
+  let best = slotGapsX[0];
+  let bestDist = Math.abs(best - x);
+  for (let i = 1; i < slotGapsX.length; i++) {
+    const d = Math.abs(slotGapsX[i] - x);
+    if (d < bestDist) {
+      best = slotGapsX[i];
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+// Pick the safeYBand best suited to carry the horizontal segment of (a, b):
+// prefer one that lies strictly between the two endpoints (so the path is
+// monotonic vertically), otherwise fall back to the band closest to the
+// natural midpoint.
+export function pickZoneIndex(a: Point, b: Point, layout: Layout): number {
+  const bands = layout.safeYBands;
+  if (bands.length === 0) return -1;
+  const yMin = Math.min(a.y, b.y);
+  const yMax = Math.max(a.y, b.y);
+  const natural = (yMin + yMax) / 2;
+  let bestIdx = 0;
+  let bestDist = Math.abs(bands[0] - natural);
+  let bestInside = bands[0] > yMin && bands[0] < yMax;
+  for (let i = 1; i < bands.length; i++) {
+    const y = bands[i];
+    const inside = y > yMin && y < yMax;
+    const dist = Math.abs(y - natural);
+    if (inside && !bestInside) {
+      bestIdx = i;
+      bestDist = dist;
+      bestInside = true;
+      continue;
+    }
+    if (inside === bestInside && dist < bestDist) {
+      bestIdx = i;
+      bestDist = dist;
+    }
+  }
+  return bestIdx;
+}
+
+// Lane-based Manhattan path: vertical out of each terminal straight to `laneY`,
+// horizontal across at `laneY`, vertical into the other terminal. `laneY` is
+// kept strictly between the two endpoints (with a LIFT margin so the vertical
+// stub from each terminal is always visible) and the per-lane step shrinks if
+// the natural spread won't fit in the available safe span. The caller must
+// only request lane routing when the safe span doesn't intersect any module
+// body (see `laneIsSafe` in the UI layer) — otherwise the horizontal middle
+// leg would run through a module body.
+export function routedPath(
+  a: Point,
+  b: Point,
+  rank: number,
+  size: number,
+  zoneIdx: number,
+  layout: Layout,
+): Point[] {
+  void zoneIdx;
+  void layout;
+  const midRank = (size - 1) / 2;
+
+  const yMin = Math.min(a.y, b.y);
+  const yMax = Math.max(a.y, b.y);
+  const safeLo = yMin + LANE_LIFT_REM;
+  const safeHi = yMax - LANE_LIFT_REM;
+  let laneCentre: number;
+  let halfRange: number;
+  if (safeHi <= safeLo) {
+    laneCentre = (yMin + yMax) / 2;
+    halfRange = 0;
+  } else {
+    laneCentre = (safeLo + safeHi) / 2;
+    halfRange = (safeHi - safeLo) / 2;
+  }
+  const naturalHalf = midRank * LANE_STEP_REM;
+  const step =
+    midRank === 0 || naturalHalf <= halfRange
+      ? LANE_STEP_REM
+      : halfRange / midRank;
+  const laneY = laneCentre + (rank - midRank) * step;
+
+  return [a, { x: a.x, y: laneY }, { x: b.x, y: laneY }, b];
 }
 
 // ---------------- Manhattan wire routing ----------------

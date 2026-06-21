@@ -90,6 +90,10 @@ export interface Wire {
   conductor: "L" | "N" | "PE";
   from: Endpoint;
   to: Endpoint;
+  // Marks wires that should be drawn with the lane-based router (one dedicated
+  // Y-track per wire within a safe band). Absent on legacy wires loaded from
+  // older saved schemes — those keep the old shared-channel manhattanPath.
+  routed?: boolean;
 }
 
 export interface Scheme {
@@ -492,6 +496,7 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
         conductor,
         from: action.from,
         to: action.to,
+        routed: true,
       };
       return {
         ...scheme,

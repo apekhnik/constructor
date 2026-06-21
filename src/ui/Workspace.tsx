@@ -27,7 +27,11 @@ import {
   busTapCount,
   busTapPosition,
   getLayout,
+  LANE_LIFT_REM,
   manhattanPath,
+  pickZoneIndex,
+  railModuleTopY,
+  routedPath,
   moduleRect,
   moduleWidthRem,
   moduleX,
@@ -701,6 +705,12 @@ function WireDot({ cx, cy, conductor, state, onClick, label }: WireDotProps) {
   );
 }
 
+interface WireLaneMeta {
+  rank: number;
+  size: number;
+  zoneIdx: number;
+}
+
 interface WirePathProps {
   wire: Wire;
   selected: boolean;
@@ -708,17 +718,35 @@ interface WirePathProps {
   positions: { from: { x: number; y: number }; to: { x: number; y: number } };
   obstacles: ModuleRect[];
   layout: Layout;
+  laneMeta?: WireLaneMeta;
 }
 
-function WirePath({ wire, selected, onClick, positions, obstacles, layout }: WirePathProps) {
-  const pts = manhattanPath(
-    positions.from,
-    positions.to,
-    obstacles,
-    layout,
-    layout.conductorChannelX[wire.conductor],
-    wire.conductor === "PE",
-  );
+function WirePath({
+  wire,
+  selected,
+  onClick,
+  positions,
+  obstacles,
+  layout,
+  laneMeta,
+}: WirePathProps) {
+  const pts = laneMeta
+    ? routedPath(
+        positions.from,
+        positions.to,
+        laneMeta.rank,
+        laneMeta.size,
+        laneMeta.zoneIdx,
+        layout,
+      )
+    : manhattanPath(
+        positions.from,
+        positions.to,
+        obstacles,
+        layout,
+        layout.conductorChannelX[wire.conductor],
+        wire.conductor === "PE",
+      );
   const pointsAttr = pts
     .map((p) => `${remToPx(p.x)},${remToPx(p.y)}`)
     .join(" ");
@@ -788,6 +816,56 @@ function WiringLayer({
     .filter((m) => m.kind !== "source")
     .map((m) => moduleRect(m, layout));
 
+  // Lane assignment for routed wires: group by safeYBand zone, sort by
+  // horizontal distance |from.x − to.x|, rank = position in sorted group.
+  // Legacy wires (routed undefined) fall back to manhattanPath.
+  // For rail-module endpoints we also resolve the nearest inter-module gap
+  // X so the vertical leg jogs into the visible gap rather than crossing
+  // the module body.
+  // Pre-compute rail-module body Y ranges. The lane router is only safe
+  // when the wire's safe-span (between endpoints, minus the lift margin)
+  // doesn't cross any of these — otherwise the horizontal middle leg would
+  // run through module bodies.
+  const railBodies: Array<[number, number]> = [];
+  for (let r = 1; r <= layout.railCount; r++) {
+    const top = railModuleTopY(r);
+    railBodies.push([top, top + MODULE_HEIGHT_REM]);
+  }
+  const laneIsSafe = (
+    a: { y: number },
+    b: { y: number },
+  ): boolean => {
+    const yMin = Math.min(a.y, b.y);
+    const yMax = Math.max(a.y, b.y);
+    const safeLo = yMin + LANE_LIFT_REM;
+    const safeHi = yMax - LANE_LIFT_REM;
+    if (safeHi <= safeLo) return false;
+    for (const [top, bot] of railBodies) {
+      if (safeLo < bot && safeHi > top) return false;
+    }
+    return true;
+  };
+
+  const laneMeta = new Map<string, WireLaneMeta>();
+  const routedByZone = new Map<number, { id: string; dist: number }[]>();
+  for (const w of scheme.wires) {
+    if (!w.routed) continue;
+    const a = endpointPos(w.from);
+    const b = endpointPos(w.to);
+    if (!a || !b) continue;
+    if (!laneIsSafe(a, b)) continue; // falls back to manhattanPath
+    const zoneIdx = pickZoneIndex(a, b, layout);
+    const bucket = routedByZone.get(zoneIdx) ?? [];
+    bucket.push({ id: w.id, dist: Math.abs(a.x - b.x) });
+    routedByZone.set(zoneIdx, bucket);
+  }
+  for (const [zoneIdx, bucket] of routedByZone) {
+    bucket.sort((x, y) => x.dist - y.dist);
+    bucket.forEach((e, rank) => {
+      laneMeta.set(e.id, { rank, size: bucket.length, zoneIdx });
+    });
+  }
+
   const pending = scheme.pendingFrom;
   const pendingKey = pending ? endpointKey(pending) : null;
 
@@ -825,6 +903,7 @@ function WiringLayer({
             onClick={() => onWireClick(w.id)}
             obstacles={obstacles}
             layout={layout}
+            laneMeta={laneMeta.get(w.id)}
           />
         );
       })}
