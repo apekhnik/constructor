@@ -4,11 +4,24 @@ import type { CatalogEntry } from "./catalog";
 import { terminalsFor } from "./terminals";
 import type { BreakerCurve, ComponentKind, TripReason } from "./types";
 
-export const SLOTS_PER_RAIL = 12;
-export const RAIL_COUNT = 2;
+// Panel variant — selectable from the UI. "small" = single DIN rail with 6
+// slots, all buses get 6 taps. "large" = two rails of 12 slots each, buses
+// get 12 taps. Layout geometry is derived in `model/layout.ts::getLayout`.
+export type PanelMode = "small" | "large";
+export const DEFAULT_PANEL_MODE: PanelMode = "large";
+
 export const SUPPLY_RAIL_INDEX = 0;
 export const LOAD_RAIL_INDEX = 3;
-export const LOAD_SLOTS = 12;
+
+export function slotsPerRail(mode: PanelMode): number {
+  return mode === "small" ? 6 : 12;
+}
+export function railCount(mode: PanelMode): number {
+  return mode === "small" ? 1 : 2;
+}
+export function loadSlots(mode: PanelMode): number {
+  return mode === "small" ? 6 : 12;
+}
 
 // Built-in grid source fixture id — present in every scheme.
 export const GRID_SOURCE_ID = "fixture_grid_source";
@@ -80,6 +93,7 @@ export interface Wire {
 }
 
 export interface Scheme {
+  panelMode: PanelMode;
   modules: PlacedModule[];
   wires: Wire[];
   selectedId: string | null;
@@ -103,7 +117,8 @@ function gridSourceFixture(): PlacedModule {
   };
 }
 
-export const emptyScheme = (): Scheme => ({
+export const emptyScheme = (mode: PanelMode = DEFAULT_PANEL_MODE): Scheme => ({
+  panelMode: mode,
   modules: [gridSourceFixture()],
   wires: [],
   selectedId: null,
@@ -125,17 +140,22 @@ export const isRailPlaceable = (kind: ComponentKind): boolean =>
   RAIL_PLACEABLE.has(kind);
 
 // Which rails (1, 2 = DIN, 3 = loads, 0 = supply) accept this kind from the palette?
-export function placementRailsFor(kind: ComponentKind): number[] {
+export function placementRailsFor(
+  kind: ComponentKind,
+  mode: PanelMode = DEFAULT_PANEL_MODE,
+): number[] {
   if (kind === "load") return [LOAD_RAIL_INDEX];
-  if (RAIL_PLACEABLE.has(kind)) return [1, 2];
+  if (RAIL_PLACEABLE.has(kind)) {
+    return railCount(mode) === 1 ? [1] : [1, 2];
+  }
   return [];
 }
 
 export const isPlaceable = (kind: ComponentKind): boolean =>
   placementRailsFor(kind).length > 0;
 
-function railSlotCount(rail: number): number {
-  return rail === LOAD_RAIL_INDEX ? LOAD_SLOTS : SLOTS_PER_RAIL;
+function railSlotCount(rail: number, mode: PanelMode): number {
+  return rail === LOAD_RAIL_INDEX ? loadSlots(mode) : slotsPerRail(mode);
 }
 
 let _seq = 0;
@@ -162,9 +182,10 @@ export function canPlace(
   slot: number,
   ignoreId?: string,
 ): boolean {
+  const mode = scheme.panelMode;
   // Supply zone (rail 0) is reserved for the built-in source — no manual drops.
-  if (rail !== LOAD_RAIL_INDEX && (rail < 1 || rail > RAIL_COUNT)) return false;
-  if (slot < 0 || slot + moduleWidth(poles) > railSlotCount(rail)) return false;
+  if (rail !== LOAD_RAIL_INDEX && (rail < 1 || rail > railCount(mode))) return false;
+  if (slot < 0 || slot + moduleWidth(poles) > railSlotCount(rail, mode)) return false;
   const taken = takenSlots(scheme, ignoreId);
   for (let i = 0; i < moduleWidth(poles); i++) {
     if (taken.has(`${rail}:${slot + i}`)) return false;
@@ -177,7 +198,8 @@ export function findFirstFreeSlot(
   poles: 1 | 2,
   rail: number,
 ): number | null {
-  for (let s = 0; s + moduleWidth(poles) <= SLOTS_PER_RAIL; s++) {
+  const cap = slotsPerRail(scheme.panelMode);
+  for (let s = 0; s + moduleWidth(poles) <= cap; s++) {
     if (canPlace(scheme, poles, rail, s)) return s;
   }
   return null;
@@ -293,8 +315,54 @@ export type SchemeAction =
   | { type: "set_pending"; ep: Endpoint | null }
   | { type: "set_source"; patch: Partial<SourceState> }
   | { type: "set_trip"; id: string; reason: TripReason }
+  | { type: "set_panel_mode"; mode: PanelMode }
   | { type: "load"; scheme: Scheme }
   | { type: "clear" };
+
+// What would be dropped if we switched to `mode`? Pure preview — caller can
+// surface a confirmation dialog before dispatching `set_panel_mode`.
+export function panelModeImpact(
+  scheme: Scheme,
+  mode: PanelMode,
+): { droppedModuleIds: string[]; droppedWireIds: Set<string> } {
+  const rails = railCount(mode);
+  const slots = slotsPerRail(mode);
+  const loads = loadSlots(mode);
+  const droppedModuleIds: string[] = [];
+  for (const m of scheme.modules) {
+    if (m.kind === "source") continue;
+    if (m.rail === LOAD_RAIL_INDEX) {
+      if (m.slot >= loads) droppedModuleIds.push(m.id);
+      continue;
+    }
+    if (m.rail < 1 || m.rail > rails) {
+      droppedModuleIds.push(m.id);
+      continue;
+    }
+    if (m.slot + moduleWidth(m.poles) > slots) {
+      droppedModuleIds.push(m.id);
+    }
+  }
+  const droppedIds = new Set(droppedModuleIds);
+  const droppedWireIds = new Set<string>();
+  for (const w of scheme.wires) {
+    const fromMod = w.from.kind === "module" && droppedIds.has(w.from.moduleId);
+    const toMod = w.to.kind === "module" && droppedIds.has(w.to.moduleId);
+    // Bus taps that no longer exist (tap index out of range for new mode).
+    const fromBus =
+      w.from.kind === "bus" && w.from.tapIndex >= maxTapIndex(w.from.bus, mode);
+    const toBus =
+      w.to.kind === "bus" && w.to.tapIndex >= maxTapIndex(w.to.bus, mode);
+    if (fromMod || toMod || fromBus || toBus) droppedWireIds.add(w.id);
+  }
+  return { droppedModuleIds, droppedWireIds };
+}
+
+function maxTapIndex(bus: "L" | "N" | "PE", mode: PanelMode): number {
+  const slots = slotsPerRail(mode);
+  // Mirror layout.ts: L/N have slotsPerRail/2 per side × 2 sides; PE has slotsPerRail × 1 side.
+  return bus === "PE" ? slots : Math.max(1, Math.floor(slots / 2)) * 2;
+}
 
 function removeWiresAttachedTo(wires: Wire[], moduleId: string): Wire[] {
   return wires.filter(
@@ -307,7 +375,7 @@ function removeWiresAttachedTo(wires: Wire[], moduleId: string): Wire[] {
 export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
   switch (action.type) {
     case "place": {
-      const acceptedRails = placementRailsFor(action.entry.kind);
+      const acceptedRails = placementRailsFor(action.entry.kind, scheme.panelMode);
       if (!acceptedRails.includes(action.rail)) return scheme;
       const poles = (action.entry.poles ?? 1) as 1 | 2;
       if (!canPlace(scheme, poles, action.rail, action.slot)) return scheme;
@@ -460,8 +528,31 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
         pendingFrom: null,
       };
     }
+    case "set_panel_mode": {
+      if (scheme.panelMode === action.mode) return scheme;
+      const { droppedModuleIds, droppedWireIds } = panelModeImpact(
+        scheme,
+        action.mode,
+      );
+      const dropSet = new Set(droppedModuleIds);
+      return {
+        ...scheme,
+        panelMode: action.mode,
+        modules: scheme.modules.filter((m) => !dropSet.has(m.id)),
+        wires: scheme.wires.filter((w) => !droppedWireIds.has(w.id)),
+        selectedId:
+          scheme.selectedId && dropSet.has(scheme.selectedId)
+            ? null
+            : scheme.selectedId,
+        selectedWireId:
+          scheme.selectedWireId && droppedWireIds.has(scheme.selectedWireId)
+            ? null
+            : scheme.selectedWireId,
+        pendingFrom: null,
+      };
+    }
     case "clear": {
-      return emptyScheme();
+      return emptyScheme(scheme.panelMode);
     }
   }
 }

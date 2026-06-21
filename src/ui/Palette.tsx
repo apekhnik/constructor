@@ -1,7 +1,71 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CATALOG, type CatalogEntry } from "../model/catalog";
-import { isPlaceable } from "../model/scheme";
+import {
+  isPlaceable,
+  panelModeImpact,
+  type PanelMode,
+} from "../model/scheme";
+import { useScheme } from "./SchemeContext";
 import type { DraggableData } from "./dnd";
+
+function PanelModeSwitcher() {
+  const { scheme, dispatch } = useScheme();
+  const current = scheme.panelMode;
+
+  const apply = (next: PanelMode) => {
+    if (next === current) return;
+    const impact = panelModeImpact(scheme, next);
+    const lost = impact.droppedModuleIds.length;
+    const lostWires = impact.droppedWireIds.size;
+    if (lost > 0 || lostWires > 0) {
+      const parts: string[] = [];
+      if (lost > 0) parts.push(`${lost} модул(я/ей) не помещается`);
+      if (lostWires > 0) parts.push(`${lostWires} провод(а/ов) оборвётся`);
+      const ok = confirm(
+        `Переключение на «${
+          next === "small" ? "1 рейка" : "2 рейки"
+        }»: ${parts.join(", ")}. Продолжить?`,
+      );
+      if (!ok) return;
+    }
+    dispatch({ type: "set_panel_mode", mode: next });
+  };
+
+  const btn = (mode: PanelMode, label: string, hint: string) => {
+    const active = mode === current;
+    return (
+      <button
+        key={mode}
+        type="button"
+        onClick={() => apply(mode)}
+        title={hint}
+        aria-pressed={active}
+        className={`flex-1 border px-[0.5rem] py-[0.45rem] text-left font-mono text-[0.55rem] uppercase tracking-widest transition-colors ${
+          active
+            ? "border-bp-cyan bg-bp-cyan/15 text-bp-text"
+            : "border-bp-line text-bp-textDim hover:border-bp-cyan/60 hover:text-bp-text"
+        }`}
+      >
+        <div className="font-semibold">{label}</div>
+        <div className="mt-[0.15rem] font-sans text-[0.55rem] normal-case tracking-normal text-bp-textMuted">
+          {hint}
+        </div>
+      </button>
+    );
+  };
+
+  return (
+    <section className="mt-auto border-t border-bp-line pt-[0.85rem]">
+      <div className="mb-[0.45rem] font-mono text-[0.55rem] uppercase tracking-widest text-bp-textMuted">
+        размер щита
+      </div>
+      <div className="flex gap-[0.35rem]">
+        {btn("small", "1 рейка", "6 слотов, 6 клемм на L/N/PE")}
+        {btn("large", "2 рейки", "12 слотов на рейку, 12 клемм")}
+      </div>
+    </section>
+  );
+}
 
 const TONE_CLASS: Record<string, string> = {
   "wire-L": "border-l-wire-L",
@@ -106,6 +170,8 @@ export function Palette() {
           </section>
         ))}
       </div>
+
+      <PanelModeSwitcher />
     </aside>
   );
 }

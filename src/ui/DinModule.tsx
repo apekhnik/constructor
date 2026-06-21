@@ -169,16 +169,17 @@ interface RelayBodyProps {
 }
 
 function RelayBody({ m, widthRem }: RelayBodyProps) {
-  const { scheme } = useScheme();
   const snap = useEngineSnapshot();
   const now = useNow(250);
 
   const uMin = m.u_min_V ?? 180;
   const uMax = m.u_max_V ?? 250;
-  const src = scheme.source;
-  // What the relay's voltmeter shows: live grid voltage when grid is on,
-  // even if the relay itself has tripped (its electronics stay powered).
-  const measured = src.grid_active && !src.neutral_break ? src.grid_voltage_V : null;
+  // The voltmeter only reads when the relay is actually wired into a live
+  // source — its electronics are powered through its own input terminals,
+  // not magically from `scheme.source`. The simulation reports both whether
+  // the module's input side is energized and the voltage seen there.
+  const rt = snap.runtime[m.id];
+  const measured = rt?.energized ? rt.voltage_in_V : null;
   const inBand = measured !== null && measured >= uMin && measured <= uMax;
 
   const recloseDeadline = snap.recloseAt[m.id];
@@ -245,6 +246,7 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
             boxShadow: "inset 0 0 0 1px rgba(0,0,0,.35)",
           }}
         />
+        <TerminalCapLabel side="top" />
       </div>
 
       {/* brand strip */}
@@ -346,6 +348,7 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
             boxShadow: "inset 0 0 0 1px rgba(0,0,0,.35)",
           }}
         />
+        <TerminalCapLabel side="bottom" />
       </div>
     </>
   );
@@ -422,6 +425,22 @@ function PotScrew({ label, value }: { label: string; value: number }) {
 
 // ---------------- Standard breaker / RCD body ----------------
 
+function TerminalCapLabel({ side }: { side: "top" | "bottom" }) {
+  const text = side === "top" ? "ВХ" : "ВЫХ";
+  return (
+    <span
+      className="absolute right-[0.18rem] font-mono text-[0.38rem] font-bold tracking-wider text-plastic-ink/65"
+      style={{
+        [side === "top" ? "top" : "bottom"]: "0.06rem",
+        textShadow: "0 1px 0 rgba(255,255,255,.45)",
+      }}
+      aria-hidden
+    >
+      {text}
+    </span>
+  );
+}
+
 function StandardBody({ m, widthRem }: { m: PlacedModule; widthRem: number }) {
   const { dispatch } = useScheme();
   const status = statusText(m);
@@ -453,6 +472,7 @@ function StandardBody({ m, widthRem }: { m: PlacedModule; widthRem: number }) {
           className="absolute left-1/2 top-[0.2rem] h-[0.3rem] -translate-x-1/2 rounded-[1px] bg-plastic-slot"
           style={{ width: `${0.5 * poles + 0.6}rem` }}
         />
+        <TerminalCapLabel side="top" />
       </div>
 
       <div className="absolute left-0 right-0 top-[1rem] text-center font-mono text-[0.5rem] font-semibold tracking-widest text-plastic-ink">
@@ -556,6 +576,7 @@ function StandardBody({ m, widthRem }: { m: PlacedModule; widthRem: number }) {
           className="absolute left-1/2 bottom-[0.2rem] h-[0.3rem] -translate-x-1/2 rounded-[1px] bg-plastic-slot"
           style={{ width: `${0.5 * poles + 0.6}rem` }}
         />
+        <TerminalCapLabel side="bottom" />
       </div>
     </>
   );

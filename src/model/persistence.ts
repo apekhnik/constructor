@@ -4,9 +4,11 @@
 // starts in an idle state.
 
 import {
+  DEFAULT_PANEL_MODE,
   defaultSource,
   emptyScheme,
   GRID_SOURCE_ID,
+  type PanelMode,
   type PlacedModule,
   type Scheme,
   type SourceState,
@@ -17,6 +19,7 @@ const STORAGE_KEY = "electroshield:scheme:v1";
 
 interface SerializedScheme {
   version: 1;
+  panelMode?: PanelMode;
   modules: PlacedModule[];
   wires: Wire[];
   source: SourceState;
@@ -42,6 +45,7 @@ function isValid(parsed: unknown): parsed is SerializedScheme {
 export function serializeScheme(scheme: Scheme): SerializedScheme {
   return {
     version: 1,
+    panelMode: scheme.panelMode,
     modules: scheme.modules,
     wires: scheme.wires,
     source: scheme.source,
@@ -49,7 +53,12 @@ export function serializeScheme(scheme: Scheme): SerializedScheme {
 }
 
 export function deserializeScheme(data: SerializedScheme): Scheme {
+  const mode: PanelMode =
+    data.panelMode === "small" || data.panelMode === "large"
+      ? data.panelMode
+      : DEFAULT_PANEL_MODE;
   return {
+    panelMode: mode,
     modules: data.modules,
     wires: data.wires,
     source: { ...defaultSource(), ...data.source },

@@ -1,8 +1,17 @@
 // Geometry of the panel (supply + rails + buses + loads) in rem.
 // Pure math, no DOM. UI and wire-overlay both derive positions from here
 // so they stay aligned regardless of React render order.
+//
+// Constants that don't vary by panel mode live at module top; everything
+// that scales with the small/large variant is computed in `getLayout(mode)`
+// and threaded into the position helpers via a `Layout` argument.
 
-import { LOAD_RAIL_INDEX, SLOTS_PER_RAIL, SUPPLY_RAIL_INDEX, type PlacedModule } from "./scheme";
+import {
+  LOAD_RAIL_INDEX,
+  SUPPLY_RAIL_INDEX,
+  type PanelMode,
+  type PlacedModule,
+} from "./scheme";
 import { terminalsFor, type TerminalDef } from "./terminals";
 
 // ---------------- Slot grid (DIN modules) ----------------
@@ -40,39 +49,17 @@ export const LOAD_ROW_PITCH_REM = LOAD_MODULE_HEIGHT_REM + LOAD_ROW_GAP_REM;
 // Reserve a top dangle so wires from the panel can reach the top of the column.
 export const LOAD_COLUMN_TOP_DANGLE_REM = 1.2;
 export const LOAD_COLUMN_BOTTOM_DANGLE_REM = 0.4;
+export const LOAD_COLUMN_WIDTH_REM = LOAD_MODULE_WIDTH_REM;
 
-// ---------------- Bus zones (split: L top-left, N top-right, PE bottom) ----------------
+// ---------------- Bus zone shape (vertical room) ----------------
 
 export const BUS_THICKNESS_REM = 0.55;
-// Taps per SIDE. L/N have taps on top (toward source) and bottom (toward rails)
-// = 12 dots each. PE has taps only on top (toward rails/loads) = 6 dots.
-export const TOP_BUS_TAPS_PER_SIDE = 6;
-export const PE_BUS_TAPS_PER_SIDE = 6;
 // Vertical room reserved for each bus strip — must include headroom for taps
 // on whichever side(s) are used.
 export const TOP_BUS_ZONE_HEIGHT_REM = 2.0;
 export const PE_BUS_ZONE_HEIGHT_REM = 1.5;
 
-// Panel width = 12 slots wide.
-export const PANEL_WIDTH_REM = SLOTS_PER_RAIL * SLOT_PITCH_REM - SLOT_GAP_REM;
-
-// Panel is shifted right inside the layout so there is a clear vertical lane
-// on the LEFT (used by L wires) that never touches any module body. The N
-// and PE lanes live on the RIGHT, between the panel and the load column.
-export const PANEL_LEFT_PAD_REM = 1.5;
-
-// Horizontal layout of the top busses (L on left, N on right of the supply).
-const TOP_BUS_SIDE_PAD_REM = 0.6;
-const TOP_BUS_CENTER_GAP_REM = 4.4; // room above the source between the two short busses
-const TOP_BUS_WIDTH_REM =
-  (PANEL_WIDTH_REM - 2 * TOP_BUS_SIDE_PAD_REM - TOP_BUS_CENTER_GAP_REM) / 2;
-
-// PE bus — short, centered along the bottom edge of the panel.
-const PE_BUS_WIDTH_REM = 12;
-const PE_BUS_X_REM =
-  PANEL_LEFT_PAD_REM + (PANEL_WIDTH_REM - PE_BUS_WIDTH_REM) / 2;
-
-// ---------------- Vertical section stack ----------------
+// ---------------- Vertical section stack (small/large share top half) ----------------
 
 export const SECTION_GAP_REM = 0.6;
 
@@ -84,32 +71,25 @@ export const TOP_BUS_ZONE_Y_REM =
 export const RAIL_1_Y_REM =
   TOP_BUS_ZONE_Y_REM + TOP_BUS_ZONE_HEIGHT_REM + SECTION_GAP_REM;
 export const RAIL_2_Y_REM = RAIL_1_Y_REM + RAIL_HEIGHT_REM + SECTION_GAP_REM;
-export const PE_BUS_ZONE_Y_REM =
-  RAIL_2_Y_REM + RAIL_HEIGHT_REM + SECTION_GAP_REM;
-export const PANEL_HEIGHT_REM =
-  PE_BUS_ZONE_Y_REM + PE_BUS_ZONE_HEIGHT_REM;
 
-// ---------------- Load column (outside the panel, on the right) ----------------
-
-// Right gap holds two dedicated wire lanes (N and PE) plus visual breathing
-// room. ~2.8rem is enough for two lanes 1.2rem apart with margin off both
-// the panel edge and the load column.
+// Panel is shifted right inside the layout so there is a clear vertical lane
+// on the LEFT (used by L wires) that never touches any module body. The N
+// and PE lanes live on the RIGHT, between the panel and the load column.
+export const PANEL_LEFT_PAD_REM = 1.5;
 export const PANEL_COLUMN_GAP_REM = 2.8;
-export const LOAD_COLUMN_X_REM =
-  PANEL_LEFT_PAD_REM + PANEL_WIDTH_REM + PANEL_COLUMN_GAP_REM;
-export const LOAD_COLUMN_WIDTH_REM = LOAD_MODULE_WIDTH_REM;
-// Use the same slot count as before; now interpreted as vertical positions.
-export const LOAD_COLUMN_ROWS = 12;
-export const LOAD_COLUMN_HEIGHT_REM =
-  LOAD_COLUMN_TOP_DANGLE_REM +
-  LOAD_COLUMN_ROWS * LOAD_MODULE_HEIGHT_REM +
-  (LOAD_COLUMN_ROWS - 1) * LOAD_ROW_GAP_REM +
-  LOAD_COLUMN_BOTTOM_DANGLE_REM;
+const SIDE_LANE_MARGIN_REM = 0.7;
+const TOP_BUS_SIDE_PAD_REM = 0.6;
+// Room above the source between the two short top busses.
+const TOP_BUS_CENTER_GAP_REM = 4.4;
 
-// ---------------- Total layout bounding box ----------------
+// Push terminal dots slightly outside the module body so they sit in the
+// dangling-wire area rather than on the module's cap.
+export const TERMINAL_OFFSET_REM = 0.5;
 
-export const LAYOUT_HEIGHT_REM = Math.max(PANEL_HEIGHT_REM, LOAD_COLUMN_HEIGHT_REM);
-export const LAYOUT_WIDTH_REM = LOAD_COLUMN_X_REM + LOAD_COLUMN_WIDTH_REM;
+// ---------------- Rem → px ----------------
+
+export const REM_TO_PX = 16;
+export const remToPx = (r: number): number => r * REM_TO_PX;
 
 // ---------------- Bus geometry (per-bus) ----------------
 
@@ -137,61 +117,178 @@ function busYForZone(
   sides: BusTapSide[],
 ): number {
   if (sides.includes("top") && sides.includes("bottom")) {
-    // dual-side: centre.
     return zoneY + (zoneH - BUS_THICKNESS_REM) / 2;
   }
   if (sides.includes("top")) {
-    // taps above → bus near bottom of zone.
     return zoneY + zoneH - BUS_THICKNESS_REM - 0.05;
   }
-  // taps below → bus near top of zone.
   return zoneY + 0.05;
 }
 
-export const BUS_GEOMETRY: Record<BusName, BusGeometry> = {
-  L: {
-    x: PANEL_LEFT_PAD_REM + TOP_BUS_SIDE_PAD_REM,
-    y: busYForZone(TOP_BUS_ZONE_Y_REM, TOP_BUS_ZONE_HEIGHT_REM, ["top", "bottom"]),
-    width: TOP_BUS_WIDTH_REM,
-    thickness: BUS_THICKNESS_REM,
-    tapsPerSide: TOP_BUS_TAPS_PER_SIDE,
-    tapSides: ["top", "bottom"],
-  },
-  N: {
-    x:
-      PANEL_LEFT_PAD_REM +
-      PANEL_WIDTH_REM -
-      TOP_BUS_SIDE_PAD_REM -
-      TOP_BUS_WIDTH_REM,
-    y: busYForZone(TOP_BUS_ZONE_Y_REM, TOP_BUS_ZONE_HEIGHT_REM, ["top", "bottom"]),
-    width: TOP_BUS_WIDTH_REM,
-    thickness: BUS_THICKNESS_REM,
-    tapsPerSide: TOP_BUS_TAPS_PER_SIDE,
-    tapSides: ["top", "bottom"],
-  },
-  PE: {
-    x: PE_BUS_X_REM,
-    y: busYForZone(PE_BUS_ZONE_Y_REM, PE_BUS_ZONE_HEIGHT_REM, ["top"]),
-    width: PE_BUS_WIDTH_REM,
-    thickness: BUS_THICKNESS_REM,
-    tapsPerSide: PE_BUS_TAPS_PER_SIDE,
-    tapSides: ["top"],
-  },
-};
+// ---------------- Panel mode → layout snapshot ----------------
 
-export const busGeometry = (b: BusName): BusGeometry => BUS_GEOMETRY[b];
-export const busTapCount = (b: BusName): number => {
-  const g = BUS_GEOMETRY[b];
-  return g.tapsPerSide * g.tapSides.length;
-};
-export const busY = (b: BusName): number => BUS_GEOMETRY[b].y;
+export interface Layout {
+  mode: PanelMode;
+  slotsPerRail: number;
+  railCount: number;
+  panelWidthRem: number;
+  panelHeightRem: number;
+  peBusZoneYRem: number;
+  loadColumnXRem: number;
+  loadColumnRows: number;
+  loadColumnHeightRem: number;
+  layoutWidthRem: number;
+  layoutHeightRem: number;
+  busGeometry: Record<BusName, BusGeometry>;
+  safeYBands: number[];
+  conductorChannelX: Record<"L" | "N" | "PE", number>;
+}
 
-// ---------------- Rem → px ----------------
+export function slotsPerRailFor(mode: PanelMode): number {
+  return mode === "small" ? 6 : 12;
+}
 
-export const REM_TO_PX = 16;
-export const remToPx = (r: number): number => r * REM_TO_PX;
+export function railCountFor(mode: PanelMode): number {
+  return mode === "small" ? 1 : 2;
+}
 
-// ---------------- Geometry helpers ----------------
+export function loadColumnRowsFor(mode: PanelMode): number {
+  return mode === "small" ? 6 : 12;
+}
+
+export function getLayout(mode: PanelMode): Layout {
+  const slotsPerRail = slotsPerRailFor(mode);
+  const railCount = railCountFor(mode);
+  const panelWidthRem = slotsPerRail * SLOT_PITCH_REM - SLOT_GAP_REM;
+
+  // Last rail's bottom Y — PE bus sits just below it.
+  const lastRailY = railCount === 1 ? RAIL_1_Y_REM : RAIL_2_Y_REM;
+  const peBusZoneYRem = lastRailY + RAIL_HEIGHT_REM + SECTION_GAP_REM;
+  const panelHeightRem = peBusZoneYRem + PE_BUS_ZONE_HEIGHT_REM;
+
+  // Load column to the right of the panel.
+  const loadColumnXRem =
+    PANEL_LEFT_PAD_REM + panelWidthRem + PANEL_COLUMN_GAP_REM;
+  const loadColumnRows = loadColumnRowsFor(mode);
+  const loadColumnHeightRem =
+    LOAD_COLUMN_TOP_DANGLE_REM +
+    loadColumnRows * LOAD_MODULE_HEIGHT_REM +
+    Math.max(0, loadColumnRows - 1) * LOAD_ROW_GAP_REM +
+    LOAD_COLUMN_BOTTOM_DANGLE_REM;
+
+  const layoutWidthRem = loadColumnXRem + LOAD_COLUMN_WIDTH_REM;
+  const layoutHeightRem = Math.max(panelHeightRem, loadColumnHeightRem);
+
+  // Top L/N busses split with a central gap above the source.
+  const topBusWidthRem =
+    (panelWidthRem - 2 * TOP_BUS_SIDE_PAD_REM - TOP_BUS_CENTER_GAP_REM) / 2;
+
+  // PE bus spans most of the panel width and gets one tap per slot.
+  const peBusWidthRem = panelWidthRem - 2 * TOP_BUS_SIDE_PAD_REM;
+  const peBusXRem = PANEL_LEFT_PAD_REM + TOP_BUS_SIDE_PAD_REM;
+
+  // Tap counts derive from slot count: L/N have slotsPerRail/2 per side
+  // (top + bottom = slotsPerRail total); PE is one-sided with slotsPerRail taps.
+  const topBusTapsPerSide = Math.max(1, Math.floor(slotsPerRail / 2));
+  const peBusTapsPerSide = slotsPerRail;
+
+  const busGeometry: Record<BusName, BusGeometry> = {
+    L: {
+      x: PANEL_LEFT_PAD_REM + TOP_BUS_SIDE_PAD_REM,
+      y: busYForZone(TOP_BUS_ZONE_Y_REM, TOP_BUS_ZONE_HEIGHT_REM, [
+        "top",
+        "bottom",
+      ]),
+      width: topBusWidthRem,
+      thickness: BUS_THICKNESS_REM,
+      tapsPerSide: topBusTapsPerSide,
+      tapSides: ["top", "bottom"],
+    },
+    N: {
+      x:
+        PANEL_LEFT_PAD_REM +
+        panelWidthRem -
+        TOP_BUS_SIDE_PAD_REM -
+        topBusWidthRem,
+      y: busYForZone(TOP_BUS_ZONE_Y_REM, TOP_BUS_ZONE_HEIGHT_REM, [
+        "top",
+        "bottom",
+      ]),
+      width: topBusWidthRem,
+      thickness: BUS_THICKNESS_REM,
+      tapsPerSide: topBusTapsPerSide,
+      tapSides: ["top", "bottom"],
+    },
+    PE: {
+      x: peBusXRem,
+      y: busYForZone(peBusZoneYRem, PE_BUS_ZONE_HEIGHT_REM, ["top"]),
+      width: peBusWidthRem,
+      thickness: BUS_THICKNESS_REM,
+      tapsPerSide: peBusTapsPerSide,
+      tapSides: ["top"],
+    },
+  };
+
+  const safeYBands: number[] = [
+    // Between source bottom and top-bus zone.
+    (SUPPLY_ZONE_Y_REM +
+      SUPPLY_TOP_DANGLE_REM +
+      SUPPLY_MODULE_HEIGHT_REM +
+      TOP_BUS_ZONE_Y_REM) /
+      2,
+    // Between top-bus zone and rail 1 module bodies.
+    (TOP_BUS_ZONE_Y_REM +
+      TOP_BUS_ZONE_HEIGHT_REM +
+      RAIL_1_Y_REM +
+      RAIL_TOP_DANGLE_REM) /
+      2,
+  ];
+  if (railCount >= 2) {
+    // Between rail 1 module bodies and rail 2 module bodies — the BIG channel.
+    safeYBands.push(
+      (RAIL_1_Y_REM +
+        RAIL_TOP_DANGLE_REM +
+        MODULE_HEIGHT_REM +
+        RAIL_2_Y_REM +
+        RAIL_TOP_DANGLE_REM) /
+        2,
+    );
+  }
+  // Between last rail module bodies and PE bus zone.
+  safeYBands.push(
+    (lastRailY + RAIL_TOP_DANGLE_REM + MODULE_HEIGHT_REM + peBusZoneYRem) / 2,
+  );
+
+  // Preferred vertical-channel x by conductor. L runs down the empty lane to
+  // the LEFT of the panel; N and PE share the right-side gap between the panel
+  // and the load column, with PE pushed further out so the (warm) yellow-green
+  // stripe doesn't visually merge into the (cool) blue N stripe right next to
+  // it.
+  const conductorChannelX: Record<"L" | "N" | "PE", number> = {
+    L: PANEL_LEFT_PAD_REM - SIDE_LANE_MARGIN_REM,
+    N: PANEL_LEFT_PAD_REM + panelWidthRem + SIDE_LANE_MARGIN_REM,
+    PE: PANEL_LEFT_PAD_REM + panelWidthRem + SIDE_LANE_MARGIN_REM + 1.2,
+  };
+
+  return {
+    mode,
+    slotsPerRail,
+    railCount,
+    panelWidthRem,
+    panelHeightRem,
+    peBusZoneYRem,
+    loadColumnXRem,
+    loadColumnRows,
+    loadColumnHeightRem,
+    layoutWidthRem,
+    layoutHeightRem,
+    busGeometry,
+    safeYBands,
+    conductorChannelX,
+  };
+}
+
+// ---------------- Position helpers ----------------
 
 interface Point {
   x: number;
@@ -224,8 +321,6 @@ export function moduleHeightFor(m: PlacedModule): number {
   return MODULE_HEIGHT_REM;
 }
 
-// Position/size of a module's body within the overall layout.
-// Loads live in a separate vertical column to the right of the panel.
 export interface ModuleRect {
   x: number;
   y: number;
@@ -233,13 +328,11 @@ export interface ModuleRect {
   height: number;
 }
 
-export function moduleRect(m: PlacedModule): ModuleRect {
+export function moduleRect(m: PlacedModule, layout: Layout): ModuleRect {
   if (m.rail === LOAD_RAIL_INDEX) {
     return {
-      x: LOAD_COLUMN_X_REM,
-      y:
-        LOAD_COLUMN_TOP_DANGLE_REM +
-        m.slot * LOAD_ROW_PITCH_REM,
+      x: layout.loadColumnXRem,
+      y: LOAD_COLUMN_TOP_DANGLE_REM + m.slot * LOAD_ROW_PITCH_REM,
       width: LOAD_COLUMN_WIDTH_REM,
       height: LOAD_MODULE_HEIGHT_REM,
     };
@@ -252,17 +345,15 @@ export function moduleRect(m: PlacedModule): ModuleRect {
   };
 }
 
-// Push terminal dots slightly outside the module body so they sit in the
-// dangling-wire area rather than on the module's cap.
-export const TERMINAL_OFFSET_REM = 0.5;
-
-export function terminalPosition(m: PlacedModule, t: TerminalDef): Point {
+export function terminalPosition(
+  m: PlacedModule,
+  t: TerminalDef,
+  layout: Layout,
+): Point {
   const all = terminalsFor(m.kind);
   const sameSide = all.filter((x) => x.side === t.side);
   const indexOnSide = sameSide.findIndex((x) => x.id === t.id);
-  const rect = moduleRect(m);
-  // For loads in the vertical column we keep the same convention (top side
-  // terminals on top edge of the box), so wires arrive from above.
+  const rect = moduleRect(m, layout);
   const x = rect.x + (rect.width * (indexOnSide + 0.5)) / sameSide.length;
   const y =
     t.side === "top"
@@ -271,12 +362,21 @@ export function terminalPosition(m: PlacedModule, t: TerminalDef): Point {
   return { x, y };
 }
 
+export function busTapCount(bus: BusName, layout: Layout): number {
+  const g = layout.busGeometry[bus];
+  return g.tapsPerSide * g.tapSides.length;
+}
+
 // Position of a bus tap. Taps are laid out per-side along the bar. The first
 // `tapsPerSide` indices live on `tapSides[0]`, the next `tapsPerSide` on
 // `tapSides[1]`, etc. — so each side has its own column of dots above or below
 // the bar.
-export function busTapPosition(bus: BusName, tapIndex: number): Point {
-  const g = BUS_GEOMETRY[bus];
+export function busTapPosition(
+  bus: BusName,
+  tapIndex: number,
+  layout: Layout,
+): Point {
+  const g = layout.busGeometry[bus];
   const sideIdx = Math.floor(tapIndex / g.tapsPerSide);
   const localIdx = tapIndex % g.tapsPerSide;
   const side = g.tapSides[sideIdx] ?? g.tapSides[0];
@@ -288,56 +388,24 @@ export function busTapPosition(bus: BusName, tapIndex: number): Point {
   return { x, y };
 }
 
-// "Safe" horizontal Y bands — vertical ranges with no module bodies. Wires
-// route their horizontal segment in one of these bands so they never cut
-// straight across a breaker / relay / load body.
-//
-// Each entry is the centre of a gutter. Order matters only for readability;
-// `chooseSafeMidY` picks by distance, not by order.
-const SAFE_Y_BANDS: number[] = [
-  // Between source bottom and top-bus zone.
-  (SUPPLY_ZONE_Y_REM +
-    SUPPLY_TOP_DANGLE_REM +
-    SUPPLY_MODULE_HEIGHT_REM +
-    TOP_BUS_ZONE_Y_REM) /
-    2,
-  // Between top-bus zone and rail 1 module bodies.
-  (TOP_BUS_ZONE_Y_REM +
-    TOP_BUS_ZONE_HEIGHT_REM +
-    RAIL_1_Y_REM +
-    RAIL_TOP_DANGLE_REM) /
-    2,
-  // Between rail 1 module bodies and rail 2 module bodies — the BIG channel.
-  (RAIL_1_Y_REM +
-    RAIL_TOP_DANGLE_REM +
-    MODULE_HEIGHT_REM +
-    RAIL_2_Y_REM +
-    RAIL_TOP_DANGLE_REM) /
-    2,
-  // Between rail 2 module bodies and PE bus zone.
-  (RAIL_2_Y_REM +
-    RAIL_TOP_DANGLE_REM +
-    MODULE_HEIGHT_REM +
-    PE_BUS_ZONE_Y_REM) /
-    2,
-];
+// ---------------- Manhattan wire routing ----------------
 
 // Pick the best horizontal Y for the middle segment of a Manhattan path.
 // Prefer a safe gutter that lies BETWEEN the two endpoints (so the path is
 // monotonic), falling back to the nearest gutter if none qualify, and finally
 // to the geometric midpoint.
-function chooseSafeMidY(a: Point, b: Point): number {
+function chooseSafeMidY(a: Point, b: Point, bands: number[]): number {
   const yMin = Math.min(a.y, b.y);
   const yMax = Math.max(a.y, b.y);
   const natural = (yMin + yMax) / 2;
-  const inside = SAFE_Y_BANDS.filter((y) => y > yMin && y < yMax);
+  const inside = bands.filter((y) => y > yMin && y < yMax);
   if (inside.length > 0) {
     return inside.reduce((best, y) =>
       Math.abs(y - natural) < Math.abs(best - natural) ? y : best,
     );
   }
-  if (SAFE_Y_BANDS.length > 0) {
-    return SAFE_Y_BANDS.reduce((best, y) =>
+  if (bands.length > 0) {
+    return bands.reduce((best, y) =>
       Math.abs(y - natural) < Math.abs(best - natural) ? y : best,
     );
   }
@@ -346,8 +414,7 @@ function chooseSafeMidY(a: Point, b: Point): number {
 
 // Treat a vertical column at `x` as colliding with rect `r` if `x` lies
 // strictly inside the rect's horizontal span AND the leg's y range overlaps
-// the rect's y span. A small epsilon lets terminals that sit right at the
-// rect edge pass through cleanly.
+// the rect's y span.
 const COLLISION_EPS_REM = 0.05;
 
 function columnHitsRect(
@@ -373,52 +440,34 @@ function columnClear(
   return true;
 }
 
-// Search outward from `preferred` x for a column that is clear of all
-// obstacles in the y range. Step is half a slot gap so we hit the inter-slot
-// gaps reliably.
 function findClearColumn(
   preferred: number,
   yMin: number,
   yMax: number,
   obs: ModuleRect[],
+  limit: number,
 ): number {
   if (columnClear(preferred, yMin, yMax, obs)) return preferred;
   const step = SLOT_GAP_REM / 2;
-  const limit = LAYOUT_WIDTH_REM;
   for (let d = step; d <= limit; d += step) {
     for (const sign of [1, -1]) {
       const x = preferred + sign * d;
-      if (x < 0 || x > LAYOUT_WIDTH_REM) continue;
+      if (x < 0 || x > limit) continue;
       if (columnClear(x, yMin, yMax, obs)) return x;
     }
   }
   return preferred;
 }
 
-// Pick the safe band between `y` and `towardY`, preferring the one closest to
-// `y` so the perpendicular exit leg from the endpoint is short.
-function bandClosestBetween(y: number, towardY: number): number {
+function bandClosestBetween(y: number, towardY: number, bands: number[]): number {
   const yMin = Math.min(y, towardY);
   const yMax = Math.max(y, towardY);
-  const between = SAFE_Y_BANDS.filter((b) => b > yMin && b < yMax);
-  const pool = between.length > 0 ? between : SAFE_Y_BANDS;
+  const between = bands.filter((b) => b > yMin && b < yMax);
+  const pool = between.length > 0 ? between : bands;
   return pool.reduce((best, b) =>
     Math.abs(b - y) < Math.abs(best - y) ? b : best,
   );
 }
-
-// Preferred vertical-channel x by conductor. L runs down the empty lane to
-// the LEFT of the panel; N and PE share the right-side gap between the panel
-// and the load column, with PE pushed further out so the (warm) yellow-green
-// stripe doesn't visually merge into the (cool) blue N stripe right next to
-// it. Distances are picked so each lane keeps ≥0.7rem clearance to module
-// bodies on either side.
-const SIDE_LANE_MARGIN_REM = 0.7;
-export const CONDUCTOR_CHANNEL_X: Record<"L" | "N" | "PE", number> = {
-  L: PANEL_LEFT_PAD_REM - SIDE_LANE_MARGIN_REM,
-  N: PANEL_LEFT_PAD_REM + PANEL_WIDTH_REM + SIDE_LANE_MARGIN_REM,
-  PE: PANEL_LEFT_PAD_REM + PANEL_WIDTH_REM + SIDE_LANE_MARGIN_REM + 1.2,
-};
 
 // Manhattan polyline. Default behaviour (no obstacles supplied) is the simple
 // V-H-V via a safe gutter. With obstacles, if either vertical leg of that
@@ -432,10 +481,14 @@ export function manhattanPath(
   a: Point,
   b: Point,
   obstacles: ModuleRect[] = [],
+  layout?: Layout,
   preferredColumnX?: number,
+  forcePreferredColumn = false,
 ): Point[] {
-  const midY = chooseSafeMidY(a, b);
-  if (obstacles.length === 0) {
+  const bands = layout?.safeYBands ?? [];
+  const widthLimit = layout?.layoutWidthRem ?? Math.max(a.x, b.x) * 2;
+  const midY = chooseSafeMidY(a, b, bands);
+  if (obstacles.length === 0 && !forcePreferredColumn) {
     return [a, { x: a.x, y: midY }, { x: b.x, y: midY }, b];
   }
   const aYmin = Math.min(a.y, midY);
@@ -443,18 +496,19 @@ export function manhattanPath(
   const bYmin = Math.min(b.y, midY);
   const bYmax = Math.max(b.y, midY);
   if (
+    !forcePreferredColumn &&
     columnClear(a.x, aYmin, aYmax, obstacles) &&
     columnClear(b.x, bYmin, bYmax, obstacles)
   ) {
     return [a, { x: a.x, y: midY }, { x: b.x, y: midY }, b];
   }
-  const exitYa = bandClosestBetween(a.y, midY);
-  const exitYb = bandClosestBetween(b.y, midY);
+  const exitYa = bandClosestBetween(a.y, midY, bands);
+  const exitYb = bandClosestBetween(b.y, midY, bands);
   const colYMin = Math.min(exitYa, exitYb);
   const colYMax = Math.max(exitYa, exitYb);
   const preferred =
     preferredColumnX !== undefined ? preferredColumnX : (a.x + b.x) / 2;
-  const cx = findClearColumn(preferred, colYMin, colYMax, obstacles);
+  const cx = findClearColumn(preferred, colYMin, colYMax, obstacles, widthLimit);
   if (Math.abs(exitYa - exitYb) < 0.01) {
     return [
       a,

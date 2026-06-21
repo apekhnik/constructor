@@ -8,20 +8,12 @@ import { isPaletteDrag, isRailDrag, type DraggableData } from "./dnd";
 import { terminalsFor } from "../model/terminals";
 import {
   BUSES,
-  BUS_GEOMETRY,
-  CONDUCTOR_CHANNEL_X,
-  LAYOUT_HEIGHT_REM,
-  LAYOUT_WIDTH_REM,
   PANEL_LEFT_PAD_REM,
-  LOAD_COLUMN_HEIGHT_REM,
-  LOAD_COLUMN_ROWS,
   LOAD_COLUMN_TOP_DANGLE_REM,
   LOAD_COLUMN_WIDTH_REM,
-  LOAD_COLUMN_X_REM,
   LOAD_MODULE_HEIGHT_REM,
   LOAD_ROW_PITCH_REM,
   MODULE_HEIGHT_REM,
-  PANEL_WIDTH_REM,
   RAIL_HEIGHT_REM,
   RAIL_TOP_DANGLE_REM,
   RAIL_1_Y_REM,
@@ -34,6 +26,7 @@ import {
   SUPPLY_ZONE_Y_REM,
   busTapCount,
   busTapPosition,
+  getLayout,
   manhattanPath,
   moduleRect,
   moduleWidthRem,
@@ -41,15 +34,15 @@ import {
   remToPx,
   terminalPosition,
   type BusName,
+  type Layout,
   type ModuleRect,
 } from "../model/layout";
 import {
   LOAD_RAIL_INDEX,
-  RAIL_COUNT,
-  SLOTS_PER_RAIL,
   canConnect,
   endpointKey,
   placementRailsFor,
+  railCount,
   type Endpoint,
   type PlacedModule,
   type Scheme,
@@ -176,6 +169,7 @@ interface ZoneSlotsArgs {
   drag: DragInfo | null;
   height: number;
   topOffset: number;
+  mode: Scheme["panelMode"];
 }
 
 function renderZoneSlots({
@@ -185,6 +179,7 @@ function renderZoneSlots({
   drag,
   height,
   topOffset,
+  mode,
 }: ZoneSlotsArgs): ReactNode[] {
   const occupiedBy = new Map<number, PlacedModule>();
   for (const m of modules) {
@@ -192,7 +187,7 @@ function renderZoneSlots({
   }
 
   const zoneAccepts = drag
-    ? placementRailsFor(drag.kind).includes(rail)
+    ? placementRailsFor(drag.kind, mode).includes(rail)
     : false;
 
   const cells: ReactNode[] = [];
@@ -265,7 +260,7 @@ function SourceBox({ m }: { m: PlacedModule }) {
   );
 }
 
-function SupplyLayer() {
+function SupplyLayer({ layout }: { layout: Layout }) {
   const { scheme } = useScheme();
   const source = scheme.modules.find((m) => m.kind === "source");
   return (
@@ -274,7 +269,7 @@ function SupplyLayer() {
       style={{
         left: 0,
         top: `${SUPPLY_ZONE_Y_REM}rem`,
-        width: `${LAYOUT_WIDTH_REM}rem`,
+        width: `${layout.layoutWidthRem}rem`,
         height: `${SUPPLY_HEIGHT_REM}rem`,
       }}
     >
@@ -282,7 +277,7 @@ function SupplyLayer() {
         className="absolute -top-[1.1rem] flex items-center justify-between px-[0.1rem]"
         style={{
           left: `${PANEL_LEFT_PAD_REM}rem`,
-          width: `${PANEL_WIDTH_REM}rem`,
+          width: `${layout.panelWidthRem}rem`,
         }}
       >
         <div className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-cyan">
@@ -461,9 +456,10 @@ export function LoadBox({ m, overlay = false }: LoadBoxProps) {
 interface LoadLayerProps {
   modules: PlacedModule[];
   drag: DragInfo | null;
+  layout: Layout;
 }
 
-function LoadLayer({ modules, drag }: LoadLayerProps) {
+function LoadLayer({ modules, drag, layout }: LoadLayerProps) {
   // Vertical column to the right of the panel. Each slot is a row.
   const occupiedBy = new Map<number, PlacedModule>();
   for (const m of modules) occupiedBy.set(m.slot, m);
@@ -471,7 +467,7 @@ function LoadLayer({ modules, drag }: LoadLayerProps) {
   const zoneAccepts = drag ? drag.kind === "load" : false;
 
   const slotCells: ReactNode[] = [];
-  for (let s = 0; s < LOAD_COLUMN_ROWS; s++) {
+  for (let s = 0; s < layout.loadColumnRows; s++) {
     if (occupiedBy.has(s)) continue;
     let highlight: "ok" | "bad" | null = null;
     if (drag && zoneAccepts) {
@@ -491,10 +487,10 @@ function LoadLayer({ modules, drag }: LoadLayerProps) {
     <div
       className="absolute"
       style={{
-        left: `${LOAD_COLUMN_X_REM}rem`,
+        left: `${layout.loadColumnXRem}rem`,
         top: 0,
         width: `${LOAD_COLUMN_WIDTH_REM}rem`,
-        height: `${LOAD_COLUMN_HEIGHT_REM}rem`,
+        height: `${layout.loadColumnHeightRem}rem`,
       }}
     >
       <div className="absolute -top-[1.1rem] left-0 right-0 flex flex-col items-center">
@@ -529,16 +525,18 @@ interface RailLayerProps {
   title: string;
   modules: PlacedModule[];
   drag: DragInfo | null;
+  layout: Layout;
 }
 
-function RailLayer({ rail, y, title, modules, drag }: RailLayerProps) {
+function RailLayer({ rail, y, title, modules, drag, layout }: RailLayerProps) {
   const slots = renderZoneSlots({
     rail,
     modules,
-    slotCount: SLOTS_PER_RAIL,
+    slotCount: layout.slotsPerRail,
     drag,
     height: MODULE_HEIGHT_REM,
     topOffset: RAIL_TOP_DANGLE_REM,
+    mode: layout.mode,
   });
 
   return (
@@ -547,31 +545,16 @@ function RailLayer({ rail, y, title, modules, drag }: RailLayerProps) {
       style={{
         left: 0,
         top: `${y}rem`,
-        width: `${LAYOUT_WIDTH_REM}rem`,
+        width: `${layout.layoutWidthRem}rem`,
         height: `${RAIL_HEIGHT_REM}rem`,
       }}
     >
-      <div
-        className="absolute -top-[1.1rem] flex items-center justify-between px-[0.1rem]"
-        style={{
-          left: `${PANEL_LEFT_PAD_REM}rem`,
-          width: `${PANEL_WIDTH_REM}rem`,
-        }}
-      >
-        <div className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-cyan">
-          РЯД {rail} · {title}
-        </div>
-        <div className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-textDim">
-          DIN 35 · {SLOTS_PER_RAIL} мод
-        </div>
-      </div>
-
       {/* metallic DIN rail bar behind modules */}
       <div
         className="absolute"
         style={{
           left: `${PANEL_LEFT_PAD_REM}rem`,
-          width: `${PANEL_WIDTH_REM}rem`,
+          width: `${layout.panelWidthRem}rem`,
           top: `${RAIL_TOP_DANGLE_REM + 0.3}rem`,
           height: "0.85rem",
           background:
@@ -580,7 +563,8 @@ function RailLayer({ rail, y, title, modules, drag }: RailLayerProps) {
           boxShadow:
             "inset 0 1px 0 rgba(255,255,255,.25),0 1px 2px rgba(0,0,0,.4)",
         }}
-        aria-hidden
+        aria-label={`Ряд ${rail} · ${title} · DIN 35, ${layout.slotsPerRail} мод`}
+        title={`Ряд ${rail} · ${title} · DIN 35, ${layout.slotsPerRail} мод`}
       />
 
       {slots}
@@ -603,8 +587,8 @@ function RailLayer({ rail, y, title, modules, drag }: RailLayerProps) {
 
 // ----------------------- Bus bars (per-bus, separately positioned) -----------------------
 
-function BusBar({ bus }: { bus: BusName }) {
-  const g = BUS_GEOMETRY[bus];
+function BusBar({ bus, layout }: { bus: BusName; layout: Layout }) {
+  const g = layout.busGeometry[bus];
   const colorBg = bus === "L" ? "bg-wire-L" : bus === "N" ? "bg-wire-N" : "";
   const peStripes =
     bus === "PE"
@@ -613,9 +597,6 @@ function BusBar({ bus }: { bus: BusName }) {
             "repeating-linear-gradient(135deg,#d9b537 0 0.45rem,#2a7a3a 0.45rem 0.9rem)",
         }
       : {};
-  // Label chip placed to the LEFT of the bar so it never overlaps the tap
-  // dots (which sit above and/or below the bar).
-  const labelText = bus;
   const labelColor =
     bus === "L" ? "text-wire-L" : bus === "N" ? "text-wire-N" : "text-wire-PEa";
   return (
@@ -632,15 +613,12 @@ function BusBar({ bus }: { bus: BusName }) {
             "inset 0 1px 0 rgba(255,255,255,.18), inset 0 -1px 0 rgba(0,0,0,.4), 0 1px 1px rgba(0,0,0,.35)",
         }}
         aria-label={`Шина ${bus}`}
+        title={`Шина ${bus}`}
       />
       <span
         className={`absolute font-display text-[0.55rem] font-bold leading-none ${labelColor}`}
         style={{
           left: `${g.x + 0.18}rem`,
-          // Place beside the bar on the side OPPOSITE to taps for L/N (above
-          // and below both have dots → choose the bar's "neutral" center).
-          // For dual-side, label is inset on the bar itself; for single-side
-          // (PE), put it on the side without taps.
           top:
             g.tapSides.length === 1
               ? g.tapSides[0] === "top"
@@ -654,17 +632,17 @@ function BusBar({ bus }: { bus: BusName }) {
         }}
         aria-hidden
       >
-        {labelText}
+        {bus}
       </span>
     </>
   );
 }
 
-function BusBarsLayer() {
+function BusBarsLayer({ layout }: { layout: Layout }) {
   return (
     <>
       {BUSES.map((bus) => (
-        <BusBar key={bus} bus={bus} />
+        <BusBar key={bus} bus={bus} layout={layout} />
       ))}
     </>
   );
@@ -729,14 +707,17 @@ interface WirePathProps {
   onClick: () => void;
   positions: { from: { x: number; y: number }; to: { x: number; y: number } };
   obstacles: ModuleRect[];
+  layout: Layout;
 }
 
-function WirePath({ wire, selected, onClick, positions, obstacles }: WirePathProps) {
+function WirePath({ wire, selected, onClick, positions, obstacles, layout }: WirePathProps) {
   const pts = manhattanPath(
     positions.from,
     positions.to,
     obstacles,
-    CONDUCTOR_CHANNEL_X[wire.conductor],
+    layout,
+    layout.conductorChannelX[wire.conductor],
+    wire.conductor === "PE",
   );
   const pointsAttr = pts
     .map((p) => `${remToPx(p.x)},${remToPx(p.y)}`)
@@ -772,27 +753,29 @@ interface WiringLayerProps {
   scheme: Scheme;
   onTerminalClick: (ep: Endpoint) => void;
   onWireClick: (id: string) => void;
+  layout: Layout;
 }
 
 function WiringLayer({
   scheme,
   onTerminalClick,
   onWireClick,
+  layout,
 }: WiringLayerProps) {
-  const W = remToPx(LAYOUT_WIDTH_REM);
-  const H = remToPx(LAYOUT_HEIGHT_REM);
+  const W = remToPx(layout.layoutWidthRem);
+  const H = remToPx(layout.layoutHeightRem);
 
   const modulePos = new Map<string, { x: number; y: number }>();
   for (const m of scheme.modules) {
     for (const t of terminalsFor(m.kind)) {
-      modulePos.set(`mod:${m.id}:${t.id}`, terminalPosition(m, t));
+      modulePos.set(`mod:${m.id}:${t.id}`, terminalPosition(m, t, layout));
     }
   }
   const busPos = new Map<string, { x: number; y: number; bus: BusName }>();
   for (const b of BUSES) {
-    const taps = busTapCount(b);
+    const taps = busTapCount(b, layout);
     for (let i = 0; i < taps; i++) {
-      const p = busTapPosition(b, i);
+      const p = busTapPosition(b, i, layout);
       busPos.set(`bus:${b}:${i}`, { ...p, bus: b });
     }
   }
@@ -803,7 +786,7 @@ function WiringLayer({
 
   const obstacles: ModuleRect[] = scheme.modules
     .filter((m) => m.kind !== "source")
-    .map(moduleRect);
+    .map((m) => moduleRect(m, layout));
 
   const pending = scheme.pendingFrom;
   const pendingKey = pending ? endpointKey(pending) : null;
@@ -822,8 +805,8 @@ function WiringLayer({
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
-      width={`${LAYOUT_WIDTH_REM}rem`}
-      height={`${LAYOUT_HEIGHT_REM}rem`}
+      width={`${layout.layoutWidthRem}rem`}
+      height={`${layout.layoutHeightRem}rem`}
       className="absolute left-0 top-0"
       style={{ pointerEvents: "none" }}
       aria-label="Слой проводов"
@@ -841,6 +824,7 @@ function WiringLayer({
             positions={{ from: a, to: b }}
             onClick={() => onWireClick(w.id)}
             obstacles={obstacles}
+            layout={layout}
           />
         );
       })}
@@ -853,7 +837,7 @@ function WiringLayer({
             moduleId: m.id,
             terminalId: t.id,
           };
-          const pos = terminalPosition(m, t);
+          const pos = terminalPosition(m, t, layout);
           return (
             <WireDot
               key={`${m.id}-${t.id}`}
@@ -870,9 +854,9 @@ function WiringLayer({
 
       {/* bus taps */}
       {BUSES.flatMap((bus) =>
-        Array.from({ length: busTapCount(bus) }, (_, i) => {
+        Array.from({ length: busTapCount(bus, layout) }, (_, i) => {
           const ep: Endpoint = { kind: "bus", bus, tapIndex: i };
-          const pos = busTapPosition(bus, i);
+          const pos = busTapPosition(bus, i, layout);
           return (
             <WireDot
               key={`bus-${bus}-${i}`}
@@ -900,6 +884,7 @@ const MAX_SCALE = 2.4;
 
 export function Workspace() {
   const { scheme, dispatch } = useScheme();
+  const layout = useMemo(() => getLayout(scheme.panelMode), [scheme.panelMode]);
   const [activeDrag, setActiveDrag] = useState<DraggableData | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
   const { width: availWidth, height: availHeight } = useElementSize(sectionRef);
@@ -907,13 +892,13 @@ export function Workspace() {
   const scale = useMemo(() => {
     if (availWidth <= 0 || availHeight <= 0) return 1;
     const padPx = WORKSPACE_PAD_REM * 2 * REM_TO_PX;
-    const layoutPxW = LAYOUT_WIDTH_REM * REM_TO_PX;
-    const layoutPxH = LAYOUT_HEIGHT_REM * REM_TO_PX;
+    const layoutPxW = layout.layoutWidthRem * REM_TO_PX;
+    const layoutPxH = layout.layoutHeightRem * REM_TO_PX;
     const byW = (availWidth - padPx) / layoutPxW;
     const byH = (availHeight - padPx - 3 * REM_TO_PX) / layoutPxH; // reserve room for the header strip
     const candidate = Math.min(byW, byH);
     return Math.max(MIN_SCALE, Math.min(MAX_SCALE, candidate));
-  }, [availWidth, availHeight]);
+  }, [availWidth, availHeight, layout]);
 
   useDndMonitor({
     onDragStart: (e) => {
@@ -926,8 +911,9 @@ export function Workspace() {
 
   const drag = dragInfo(activeDrag, scheme);
 
+  const rails = railCount(scheme.panelMode);
   const railsModules: PlacedModule[][] = Array.from(
-    { length: RAIL_COUNT },
+    { length: rails },
     (_, i) =>
       scheme.modules.filter((m) => m.rail === i + 1 && m.kind !== "source"),
   );
@@ -966,8 +952,8 @@ export function Workspace() {
 
   // Reserve enough room after scaling so the parent can scroll if the
   // user zoomed in past the viewport.
-  const scaledWidthPx = LAYOUT_WIDTH_REM * REM_TO_PX * scale;
-  const scaledHeightPx = LAYOUT_HEIGHT_REM * REM_TO_PX * scale;
+  const scaledWidthPx = layout.layoutWidthRem * REM_TO_PX * scale;
+  const scaledHeightPx = layout.layoutHeightRem * REM_TO_PX * scale;
 
   return (
     <section
@@ -1008,33 +994,38 @@ export function Workspace() {
           <div
             className="absolute left-0 top-0"
             style={{
-              width: `${LAYOUT_WIDTH_REM}rem`,
-              height: `${LAYOUT_HEIGHT_REM}rem`,
+              width: `${layout.layoutWidthRem}rem`,
+              height: `${layout.layoutHeightRem}rem`,
               transform: `scale(${scale})`,
               transformOrigin: "top left",
             }}
           >
-            <BusBarsLayer />
-            <SupplyLayer />
+            <BusBarsLayer layout={layout} />
+            <SupplyLayer layout={layout} />
             <RailLayer
               rail={1}
               y={RAIL_1_Y_REM}
-              title={RAIL_TITLES[0]}
+              title={rails === 1 ? "СБОРКА" : RAIL_TITLES[0]}
               modules={railsModules[0]}
               drag={drag}
+              layout={layout}
             />
-            <RailLayer
-              rail={2}
-              y={RAIL_2_Y_REM}
-              title={RAIL_TITLES[1]}
-              modules={railsModules[1]}
-              drag={drag}
-            />
-            <LoadLayer modules={loadsModules} drag={drag} />
+            {rails >= 2 && (
+              <RailLayer
+                rail={2}
+                y={RAIL_2_Y_REM}
+                title={RAIL_TITLES[1]}
+                modules={railsModules[1]}
+                drag={drag}
+                layout={layout}
+              />
+            )}
+            <LoadLayer modules={loadsModules} drag={drag} layout={layout} />
             <WiringLayer
               scheme={scheme}
               onTerminalClick={handleTerminalClick}
               onWireClick={handleWireClick}
+              layout={layout}
             />
           </div>
         </div>
