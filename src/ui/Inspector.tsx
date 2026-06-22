@@ -2,7 +2,13 @@ import { useScheme } from "./SchemeContext";
 import { useEngineSnapshot } from "./SimulationContext";
 import { useNow } from "../engine/runtime";
 import type { ComponentKind, TripReason } from "../model/types";
-import type { Endpoint, PlacedModule, SwitchPosition, Wire } from "../model/scheme";
+import type {
+  Endpoint,
+  PlacedModule,
+  RelayDisplayMode,
+  SwitchPosition,
+  Wire,
+} from "../model/scheme";
 
 const KIND_LABEL: Record<ComponentKind, string> = {
   source: "Источник",
@@ -131,10 +137,125 @@ function SwitchControl({ m }: { m: PlacedModule }) {
   );
 }
 
-function RelayControl({ m }: { m: PlacedModule }) {
+const LOAD_PRESETS: Array<{ label: string; W: number }> = [
+  { label: "LED 10 Вт", W: 10 },
+  { label: "Лампа 100 Вт", W: 100 },
+  { label: "Чайник 2 кВт", W: 2000 },
+  { label: "Плита 5 кВт", W: 5000 },
+];
+
+function formatPower(W: number): string {
+  if (W >= 1000) return `${(W / 1000).toFixed(W >= 10_000 ? 0 : 1)} кВт`;
+  return `${W} Вт`;
+}
+
+function LoadControl({ m }: { m: PlacedModule }) {
   const { dispatch } = useScheme();
+  const { runtime } = useEngineSnapshot();
+  const power = m.power_W ?? 0;
+  const rt = runtime[m.id];
+  const measuredI = rt?.current_A ?? 0;
+  const refI = power / 230;
   return (
     <div className="mt-[0.5rem] flex flex-col gap-[0.4rem]">
+      <label className="flex flex-col gap-[0.25rem]">
+        <div className="flex items-baseline justify-between">
+          <span className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-textDim">
+            мощность
+          </span>
+          <span className="font-mono text-[0.75rem] font-bold text-bp-text">
+            {formatPower(power)}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={10000}
+          step={50}
+          value={power}
+          onChange={(e) =>
+            dispatch({
+              type: "set_load_power",
+              id: m.id,
+              power_W: Number(e.target.value),
+            })
+          }
+          className="w-full accent-bp-cyan"
+          aria-label="Мощность нагрузки"
+        />
+      </label>
+      <div className="flex items-baseline justify-between font-mono text-[0.6rem] text-bp-textDim">
+        <span>при 230 В</span>
+        <span className="text-bp-text">≈ {refI.toFixed(2)} A</span>
+      </div>
+      {rt?.energized && (
+        <div className="flex items-baseline justify-between font-mono text-[0.6rem] text-bp-textDim">
+          <span>сейчас</span>
+          <span className="text-bp-text">{measuredI.toFixed(2)} A</span>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-[0.25rem]">
+        {LOAD_PRESETS.map((p) => (
+          <button
+            key={p.W}
+            type="button"
+            onClick={() =>
+              dispatch({ type: "set_load_power", id: m.id, power_W: p.W })
+            }
+            className={`border px-[0.45rem] py-[0.25rem] font-mono text-[0.55rem] uppercase tracking-widest transition-colors ${
+              power === p.W
+                ? "border-bp-cyan bg-bp-cyan/15 text-bp-cyan"
+                : "border-bp-line bg-bp-surface text-bp-textDim hover:bg-bp-surfaceTop"
+            }`}
+            aria-pressed={power === p.W}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const RELAY_DISPLAY_LABELS: Record<RelayDisplayMode, string> = {
+  V: "U · В",
+  A: "I · А",
+  W: "P · Вт",
+};
+
+function RelayControl({ m }: { m: PlacedModule }) {
+  const { dispatch } = useScheme();
+  const modes: RelayDisplayMode[] = ["V", "A", "W"];
+  const current = m.relay_display ?? "V";
+  return (
+    <div className="mt-[0.5rem] flex flex-col gap-[0.4rem]">
+      <div className="flex flex-col gap-[0.25rem]">
+        <span className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-textDim">
+          режим индикации
+        </span>
+        <div className="flex gap-[0.25rem]">
+          {modes.map((mode) => {
+            const selected = current === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() =>
+                  dispatch({ type: "set_relay_display", id: m.id, mode })
+                }
+                className={`flex-1 border px-[0.5rem] py-[0.4rem] font-mono text-[0.6rem] uppercase tracking-widest transition-colors ${
+                  selected
+                    ? "border-bp-cyan bg-bp-cyan/20 text-bp-cyan"
+                    : "border-bp-line bg-bp-surface text-bp-textDim hover:bg-bp-surfaceTop"
+                }`}
+                aria-pressed={selected}
+              >
+                {RELAY_DISPLAY_LABELS[mode]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <ThresholdInput
         label="нижний порог Umin"
         value={m.u_min_V ?? 180}
@@ -231,6 +352,9 @@ function ModuleSection({ m }: { m: PlacedModule }) {
         {m.rated_leak_mA !== undefined && (
           <Row label="утечка" value={`${m.rated_leak_mA} мА`} />
         )}
+        {m.kind === "load" && m.power_W !== undefined && (
+          <Row label="мощность" value={formatPower(m.power_W)} />
+        )}
         <Row label="спецификация" value={m.spec} />
 
         {rt && !isFixture && (
@@ -258,6 +382,7 @@ function ModuleSection({ m }: { m: PlacedModule }) {
 
       {m.kind === "three_way_switch" && <SwitchControl m={m} />}
       {m.kind === "voltage_relay" && <RelayControl m={m} />}
+      {m.kind === "load" && <LoadControl m={m} />}
 
       <div className="mt-[0.5rem] flex gap-[0.5rem]">
         {!isFixture && (

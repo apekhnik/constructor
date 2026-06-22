@@ -900,12 +900,12 @@ function WiringLayer({
   const fallbackMidYOffsets = new Map<string, number>();
   const fallbackPreferredColumnX = new Map<string, number>();
   // Base Y bias per conductor so L and N fallback paths never share a Y
-  // stripe. Intra-conductor step is kept tight enough that two L wires never
-  // wander into the N stripe (and vice versa).
+  // stripe — kept small (~2-3 px) so the horizontal band-Y doesn't drift
+  // onto a neighbouring row of terminal dots.
   const CONDUCTOR_FALLBACK_BIAS: Record<"L" | "N" | "PE", number> = {
-    L: -0.4,
-    N: 0.4,
-    PE: 0.8,
+    L: -0.15,
+    N: 0.15,
+    PE: 0.3,
   };
   for (const [conductor, bucket] of fallbackByConductor) {
     bucket.sort((x, y) => x.dist - y.dist);
@@ -913,7 +913,7 @@ function WiringLayer({
     bucket.forEach((e, rank) => {
       fallbackMidYOffsets.set(
         e.id,
-        CONDUCTOR_FALLBACK_BIAS[conductor] + (rank - midRank) * 0.3,
+        CONDUCTOR_FALLBACK_BIAS[conductor] + (rank - midRank) * 0.18,
       );
     });
   }

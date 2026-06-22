@@ -285,14 +285,21 @@ export function simulate(scheme: Scheme): TickResult {
   }));
   for (const { id, info } of loadResults) {
     const r = runtime[id];
+    const mod = scheme.modules.find((m) => m.id === id);
     r.energized = info.energized;
     r.voltage_in_V = info.voltage_V;
     r.voltage_out_V = info.voltage_V;
     // Lit only within a sensible working range.
     r.lit = info.energized && info.voltage_V >= 180 && info.voltage_V <= 260;
-    r.current_A = info.energized
-      ? (scheme.modules.find((m) => m.id === id)?.rated_current_A ?? 0)
-      : 0;
+    // I = P / U at the actual terminal voltage. Below 50 V we clamp the
+    // denominator so a tiny residual voltage doesn't blow up the breaker
+    // current to absurd kA values.
+    if (info.energized && mod?.power_W) {
+      const u = Math.max(50, info.voltage_V);
+      r.current_A = mod.power_W / u;
+    } else {
+      r.current_A = 0;
+    }
   }
 
   // ---- Attribute load current to upstream switching devices ----
@@ -315,7 +322,7 @@ export function simulate(scheme: Scheme): TickResult {
 
     const loadIds = fedBy.get(m.id) ?? [];
     const totalCurrent = loadIds
-      .map((lid) => scheme.modules.find((x) => x.id === lid)?.rated_current_A ?? 0)
+      .map((lid) => runtime[lid]?.current_A ?? 0)
       .reduce((a, b) => a + b, 0);
     r.current_A = totalCurrent;
 

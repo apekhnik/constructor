@@ -28,6 +28,9 @@ export const GRID_SOURCE_ID = "fixture_grid_source";
 
 export type SwitchPosition = "network" | "off" | "generator";
 
+export type RelayDisplayMode = "V" | "A" | "W";
+export const RELAY_DISPLAY_CYCLE: RelayDisplayMode[] = ["V", "A", "W"];
+
 export interface PlacedModule {
   id: string;
   kind: ComponentKind;
@@ -48,6 +51,12 @@ export interface PlacedModule {
   // Voltage relay user-tunable thresholds (CLAUDE.md §2.5).
   u_min_V?: number;
   u_max_V?: number;
+  // Load active power in watts. Simulator derives current as power_W / U so
+  // turning the dial up trips upstream breakers by overload / short-circuit.
+  power_W?: number;
+  // Voltage-relay digital display mode — selectable between V (line voltage),
+  // A (line current through the relay) and W (instantaneous active power).
+  relay_display?: RelayDisplayMode;
 }
 
 // Sliders, kill-switches and simulated faults (CLAUDE.md §2.1, §2.5).
@@ -232,6 +241,8 @@ export function makePlacedFromCatalog(
     switch_position: entry.kind === "three_way_switch" ? "network" : undefined,
     u_min_V: entry.kind === "voltage_relay" ? DEFAULT_U_MIN_V : undefined,
     u_max_V: entry.kind === "voltage_relay" ? DEFAULT_U_MAX_V : undefined,
+    relay_display: entry.kind === "voltage_relay" ? "V" : undefined,
+    power_W: entry.kind === "load" ? (entry.power_W ?? 100) : undefined,
   };
 }
 
@@ -313,6 +324,9 @@ export type SchemeAction =
       u_min_V?: number;
       u_max_V?: number;
     }
+  | { type: "set_load_power"; id: string; power_W: number }
+  | { type: "cycle_relay_display"; id: string }
+  | { type: "set_relay_display"; id: string; mode: RelayDisplayMode }
   | { type: "add_wire"; from: Endpoint; to: Endpoint }
   | { type: "remove_wire"; id: string }
   | { type: "select_wire"; id: string | null }
@@ -465,6 +479,41 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
         modules: scheme.modules.map((x) =>
           x.id === action.id && x.kind === "three_way_switch"
             ? { ...x, switch_position: action.position }
+            : x,
+        ),
+      };
+    }
+    case "cycle_relay_display": {
+      return {
+        ...scheme,
+        modules: scheme.modules.map((x) => {
+          if (x.id !== action.id || x.kind !== "voltage_relay") return x;
+          const cur = x.relay_display ?? "V";
+          const next =
+            RELAY_DISPLAY_CYCLE[
+              (RELAY_DISPLAY_CYCLE.indexOf(cur) + 1) % RELAY_DISPLAY_CYCLE.length
+            ];
+          return { ...x, relay_display: next };
+        }),
+      };
+    }
+    case "set_relay_display": {
+      return {
+        ...scheme,
+        modules: scheme.modules.map((x) =>
+          x.id === action.id && x.kind === "voltage_relay"
+            ? { ...x, relay_display: action.mode }
+            : x,
+        ),
+      };
+    }
+    case "set_load_power": {
+      const clamped = Math.max(0, Math.min(25_000, Math.round(action.power_W)));
+      return {
+        ...scheme,
+        modules: scheme.modules.map((x) =>
+          x.id === action.id && x.kind === "load"
+            ? { ...x, power_W: clamped, tripped: false, trip_reason: null }
             : x,
         ),
       };

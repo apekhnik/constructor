@@ -108,26 +108,29 @@ describe("simulate — happy path", () => {
 });
 
 describe("simulate — breaker trips", () => {
-  it("short circuit: 100 A load on a C16 breaker → instant short_circuit trip", () => {
+  it("short circuit: ~100 A load on a C16 breaker → instant short_circuit trip", () => {
     const { scheme, breakerId, loadId } = basicSchemeWithBreaker(16, "C");
-    const s = patchModule(scheme, loadId, { rated_current_A: 100 });
+    // P = U·I → 230 V · 100 A = 23 kW
+    const s = patchModule(scheme, loadId, { power_W: 23_000 });
     const r = simulate(s);
     expect(r.newTrips).toEqual([
       { id: breakerId, reason: "short_circuit" },
     ]);
   });
 
-  it("overload: 25 A on a C16 → pending overload (no instant trip)", () => {
+  it("overload: ~25 A on a C16 → pending overload (no instant trip)", () => {
     const { scheme, breakerId, loadId } = basicSchemeWithBreaker(16, "C");
-    const s = patchModule(scheme, loadId, { rated_current_A: 25 });
+    // 230 V · 25 A = 5750 W
+    const s = patchModule(scheme, loadId, { power_W: 5_750 });
     const r = simulate(s);
     expect(r.newTrips).toEqual([]);
     expect(r.runtime[breakerId].trip_pending?.reason).toBe("overload");
   });
 
-  it("normal load: 5 A on a C16 → no trip, lamp lit", () => {
+  it("normal load: ~5 A on a C16 → no trip, lamp lit", () => {
     const { scheme, breakerId, loadId } = basicSchemeWithBreaker(16, "C");
-    const s = patchModule(scheme, loadId, { rated_current_A: 5 });
+    // 230 V · 5 A = 1150 W
+    const s = patchModule(scheme, loadId, { power_W: 1_150 });
     const r = simulate(s);
     expect(r.newTrips).toEqual([]);
     expect(r.runtime[breakerId].trip_pending).toBeUndefined();

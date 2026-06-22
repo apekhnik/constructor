@@ -13,6 +13,10 @@ export interface CatalogEntry {
   rated_current_A?: number;
   curve?: BreakerCurve;
   rated_leak_mA?: number;
+  // Loads: nameplate active power in watts. Current is derived in the
+  // simulator as P / U_actual so a stronger appliance trips the upstream
+  // breaker.
+  power_W?: number;
 }
 
 export const CATALOG: CatalogEntry[] = [
@@ -78,10 +82,10 @@ export const CATALOG: CatalogEntry[] = [
   {
     kind: "load",
     group: "infra",
-    name: "Нагрузка / лампа",
-    spec: "пресет 0.5 A",
+    name: "Нагрузка",
+    spec: "регулируемая · по умолч. 100 Вт",
     toneVarName: "bp-textDim",
     poles: 2,
-    rated_current_A: 0.5,
+    power_W: 100,
   },
 ];

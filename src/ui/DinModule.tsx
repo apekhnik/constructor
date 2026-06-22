@@ -161,6 +161,24 @@ function displayDigits(value: number | null, blank = "---"): string {
   return String(v).padStart(3, " ");
 }
 
+// Format a relay reading for the 3-digit display: gives the actual digits to
+// render and the caption (with unit suffix) to show under the window. For
+// power we auto-scale Вт → кВт once the load exceeds 999 W so a 5 kW kettle
+// stays readable.
+function formatRelayMetric(
+  mode: "V" | "A" | "W",
+  value: number | null,
+): { digits: string; caption: string } {
+  if (value === null || !isFinite(value)) {
+    const cap = mode === "V" ? "U · В" : mode === "A" ? "I · А" : "P · Вт";
+    return { digits: "---", caption: cap };
+  }
+  if (mode === "V") return { digits: displayDigits(value), caption: "U · В" };
+  if (mode === "A") return { digits: displayDigits(value), caption: "I · А" };
+  if (value < 1000) return { digits: displayDigits(value), caption: "P · Вт" };
+  return { digits: displayDigits(value / 1000), caption: "P · кВт" };
+}
+
 // ---------------- Voltage relay body ----------------
 
 interface RelayBodyProps {
@@ -170,6 +188,7 @@ interface RelayBodyProps {
 
 function RelayBody({ m, widthRem }: RelayBodyProps) {
   const snap = useEngineSnapshot();
+  const { dispatch } = useScheme();
   const now = useNow(250);
 
   const uMin = m.u_min_V ?? 180;
@@ -180,6 +199,9 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
   // the module's input side is energized and the voltage seen there.
   const rt = snap.runtime[m.id];
   const measured = rt?.energized ? rt.voltage_in_V : null;
+  const measuredI = rt?.energized ? rt.current_A : null;
+  const measuredP =
+    measured !== null && measuredI !== null ? measured * measuredI : null;
   const inBand = measured !== null && measured >= uMin && measured <= uMax;
 
   const recloseDeadline = snap.recloseAt[m.id];
@@ -188,10 +210,15 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
       ? Math.ceil((recloseDeadline - now) / 1000)
       : null;
 
+  const mode = m.relay_display ?? "V";
+  const modeValue =
+    mode === "V" ? measured : mode === "A" ? measuredI : measuredP;
+  const modeFmt = formatRelayMetric(mode, modeValue);
+  const modeCaption = modeFmt.caption;
+
   // What to show on the digital display:
-  //   - countdown text "AP-N" during APV (3 digits: "AP", then sec) — but we
-  //     only have 3 digits; use "A" + 2-digit seconds.
-  //   - else current measured voltage
+  //   - countdown text "AP-N" during APV — uses "A" + 1-digit seconds.
+  //   - else the metric for the currently selected mode (V / A / W).
   //   - "---" if grid inactive / no neutral
   let displayValue: string;
   let displayColor = "#ff3a28"; // red default
@@ -199,11 +226,11 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
   if (recloseSec !== null) {
     displayValue = `A ${String(recloseSec).padStart(1, " ")}`;
     displayColor = "#ffb025"; // amber while counting down
-  } else if (m.tripped && measured !== null) {
-    displayValue = displayDigits(measured);
-    displayBlink = true; // blink to draw attention to the fault voltage
+  } else if (m.tripped && modeValue !== null) {
+    displayValue = modeFmt.digits;
+    displayBlink = true; // blink to draw attention to the fault reading
   } else {
-    displayValue = displayDigits(measured);
+    displayValue = modeFmt.digits;
     if (measured !== null && !inBand) displayBlink = true;
   }
   // Pad / trim to exactly 3 characters for 3 digit slots.
@@ -261,9 +288,14 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
         </span>
       </div>
 
-      {/* digital display window */}
-      <div
-        className="absolute left-1/2 top-[1.65rem] flex h-[1.95rem] -translate-x-1/2 items-center justify-center rounded-[3px] px-[0.35rem]"
+      {/* digital display window — clickable, cycles V/A/W */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          dispatch({ type: "cycle_relay_display", id: m.id });
+        }}
+        className="absolute left-1/2 top-[1.65rem] flex h-[1.95rem] -translate-x-1/2 items-center justify-center rounded-[3px] px-[0.35rem] outline-none focus-visible:ring-1 focus-visible:ring-bp-cyan"
         style={{
           width: `${widthRem - 0.55}rem`,
           background:
@@ -271,7 +303,8 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
           boxShadow:
             "inset 0 1.5px 3px rgba(0,0,0,.85), inset 0 0 0 1px rgba(255,160,140,.04), 0 1px 0 rgba(255,255,255,.35)",
         }}
-        aria-hidden
+        aria-label={`Режим индикации: ${modeCaption}. Кликните, чтобы переключить`}
+        title="Переключить V / A / W"
       >
         <div
           className={`flex items-center gap-[0.07rem] ${
@@ -282,7 +315,7 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
             <SegDigit key={i} d={c} on={displayColor} />
           ))}
         </div>
-      </div>
+      </button>
 
       {/* status caption under display */}
       <div className="absolute left-0 right-0 top-[3.75rem] text-center font-mono text-[0.42rem] font-medium tracking-[0.2em] text-plastic-inkSoft/70">
@@ -290,7 +323,7 @@ function RelayBody({ m, widthRem }: RelayBodyProps) {
           ? "АПВ"
           : reasonShort
             ? `АВАРИЯ · ${reasonShort}`
-            : "U сети"}
+            : modeCaption}
       </div>
 
       {/* 3 indicator LEDs */}

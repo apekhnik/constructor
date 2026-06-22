@@ -464,14 +464,14 @@ export function pickZoneIndex(a: Point, b: Point, layout: Layout): number {
   return bestIdx;
 }
 
-// Conductor-specific bias inside a shared safe band: L wires sit in the upper
-// half (smaller Y), N/PE wires sit in the lower half. Caller buckets routed
-// wires per (zone, conductor) so each conductor's ranks span only its own
-// sub-band — that keeps L and N from sharing a horizontal Y in the same band.
-const CONDUCTOR_LANE_BIAS: Record<"L" | "N" | "PE", number> = {
-  L: -0.5,
-  N: 0.5,
-  PE: 0.5,
+// Conductor-specific bias inside a shared safe band, in REM (not as a fraction
+// of halfRange — fractional bias scales with the band's free room and could
+// push L wires onto neighbouring rows of terminal dots). A small fixed offset
+// keeps the L stripe ~2-3 px above the N stripe regardless of band size.
+const CONDUCTOR_LANE_BIAS_REM: Record<"L" | "N" | "PE", number> = {
+  L: -0.15,
+  N: 0.15,
+  PE: 0.3,
 };
 
 // Lane-based Manhattan path: vertical out of each terminal straight to `laneY`,
@@ -508,9 +508,15 @@ export function routedPath(
     laneCentre = (safeLo + safeHi) / 2;
     halfRange = (safeHi - safeLo) / 2;
   }
-  const bias = conductor ? CONDUCTOR_LANE_BIAS[conductor] : 0;
-  const subCentre = laneCentre + bias * halfRange;
-  const subHalf = halfRange / 2;
+  // Clamp bias to the safe half-range so a small band (e.g. between the last
+  // rail and PE bus) doesn't push the lane outside the safe gutter and onto
+  // a row of terminal dots.
+  const biasRaw = conductor ? CONDUCTOR_LANE_BIAS_REM[conductor] : 0;
+  const biasLimit = Math.max(0, halfRange - LANE_STEP_REM * 0.25);
+  const bias = Math.max(-biasLimit, Math.min(biasLimit, biasRaw));
+  const subCentre = laneCentre + bias;
+  // Tight intra-conductor step so L wires never wander into the N sub-band.
+  const subHalf = Math.max(0, halfRange - Math.abs(bias));
   const naturalHalf = midRank * LANE_STEP_REM;
   const step =
     midRank === 0 || naturalHalf <= subHalf
