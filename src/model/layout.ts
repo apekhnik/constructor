@@ -464,6 +464,16 @@ export function pickZoneIndex(a: Point, b: Point, layout: Layout): number {
   return bestIdx;
 }
 
+// Conductor-specific bias inside a shared safe band: L wires sit in the upper
+// half (smaller Y), N/PE wires sit in the lower half. Caller buckets routed
+// wires per (zone, conductor) so each conductor's ranks span only its own
+// sub-band — that keeps L and N from sharing a horizontal Y in the same band.
+const CONDUCTOR_LANE_BIAS: Record<"L" | "N" | "PE", number> = {
+  L: -0.5,
+  N: 0.5,
+  PE: 0.5,
+};
+
 // Lane-based Manhattan path: vertical out of each terminal straight to `laneY`,
 // horizontal across at `laneY`, vertical into the other terminal. `laneY` is
 // kept strictly between the two endpoints (with a LIFT margin so the vertical
@@ -479,6 +489,7 @@ export function routedPath(
   size: number,
   zoneIdx: number,
   layout: Layout,
+  conductor?: "L" | "N" | "PE",
 ): Point[] {
   void zoneIdx;
   void layout;
@@ -497,12 +508,15 @@ export function routedPath(
     laneCentre = (safeLo + safeHi) / 2;
     halfRange = (safeHi - safeLo) / 2;
   }
+  const bias = conductor ? CONDUCTOR_LANE_BIAS[conductor] : 0;
+  const subCentre = laneCentre + bias * halfRange;
+  const subHalf = halfRange / 2;
   const naturalHalf = midRank * LANE_STEP_REM;
   const step =
-    midRank === 0 || naturalHalf <= halfRange
+    midRank === 0 || naturalHalf <= subHalf
       ? LANE_STEP_REM
-      : halfRange / midRank;
-  const laneY = laneCentre + (rank - midRank) * step;
+      : subHalf / midRank;
+  const laneY = subCentre + (rank - midRank) * step;
 
   return [a, { x: a.x, y: laneY }, { x: b.x, y: laneY }, b];
 }
@@ -578,12 +592,11 @@ function findClearColumn(
   return preferred;
 }
 
-function bandClosestBetween(y: number, towardY: number, bands: number[]): number {
-  const yMin = Math.min(y, towardY);
-  const yMax = Math.max(y, towardY);
-  const between = bands.filter((b) => b > yMin && b < yMax);
-  const pool = between.length > 0 ? between : bands;
-  return pool.reduce((best, b) =>
+// Pick the safeYBand nearest to `y` — independently of any other endpoint.
+// Used to anchor each manhattan-path exit on the side of its terminal so the
+// short vertical stub doesn't have to cut across a module body to reach it.
+function bandClosestTo(y: number, bands: number[]): number {
+  return bands.reduce((best, b) =>
     Math.abs(b - y) < Math.abs(best - y) ? b : best,
   );
 }
@@ -603,10 +616,14 @@ export function manhattanPath(
   layout?: Layout,
   preferredColumnX?: number,
   forcePreferredColumn = false,
+  // Per-wire vertical offset added to the chosen horizontal Y (and exit Ys).
+  // Used by the caller to spread otherwise-identical fallback paths into
+  // parallel lanes so they don't render on top of each other.
+  midYOffset = 0,
 ): Point[] {
   const bands = layout?.safeYBands ?? [];
   const widthLimit = layout?.layoutWidthRem ?? Math.max(a.x, b.x) * 2;
-  const midY = chooseSafeMidY(a, b, bands);
+  const midY = chooseSafeMidY(a, b, bands) + midYOffset;
   if (obstacles.length === 0 && !forcePreferredColumn) {
     return [a, { x: a.x, y: midY }, { x: b.x, y: midY }, b];
   }
@@ -621,8 +638,8 @@ export function manhattanPath(
   ) {
     return [a, { x: a.x, y: midY }, { x: b.x, y: midY }, b];
   }
-  const exitYa = bandClosestBetween(a.y, midY, bands);
-  const exitYb = bandClosestBetween(b.y, midY, bands);
+  const exitYa = bandClosestTo(a.y, bands) + midYOffset;
+  const exitYb = bandClosestTo(b.y, bands) + midYOffset;
   const colYMin = Math.min(exitYa, exitYb);
   const colYMax = Math.max(exitYa, exitYb);
   const preferred =

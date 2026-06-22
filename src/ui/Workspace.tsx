@@ -29,6 +29,7 @@ import {
   getLayout,
   LANE_LIFT_REM,
   manhattanPath,
+  nearestGapX,
   pickZoneIndex,
   railModuleTopY,
   routedPath,
@@ -719,6 +720,8 @@ interface WirePathProps {
   obstacles: ModuleRect[];
   layout: Layout;
   laneMeta?: WireLaneMeta;
+  fallbackMidYOffset?: number;
+  fallbackPreferredColumnX?: number;
 }
 
 function WirePath({
@@ -729,6 +732,8 @@ function WirePath({
   obstacles,
   layout,
   laneMeta,
+  fallbackMidYOffset,
+  fallbackPreferredColumnX,
 }: WirePathProps) {
   const pts = laneMeta
     ? routedPath(
@@ -738,14 +743,16 @@ function WirePath({
         laneMeta.size,
         laneMeta.zoneIdx,
         layout,
+        wire.conductor,
       )
     : manhattanPath(
         positions.from,
         positions.to,
         obstacles,
         layout,
-        layout.conductorChannelX[wire.conductor],
+        fallbackPreferredColumnX ?? layout.conductorChannelX[wire.conductor],
         wire.conductor === "PE",
+        fallbackMidYOffset ?? 0,
       );
   const pointsAttr = pts
     .map((p) => `${remToPx(p.x)},${remToPx(p.y)}`)
@@ -822,12 +829,18 @@ function WiringLayer({
   // For rail-module endpoints we also resolve the nearest inter-module gap
   // X so the vertical leg jogs into the visible gap rather than crossing
   // the module body.
-  // Pre-compute rail-module body Y ranges. The lane router is only safe
-  // when the wire's safe-span (between endpoints, minus the lift margin)
-  // doesn't cross any of these — otherwise the horizontal middle leg would
-  // run through module bodies.
+  // Pre-compute rail-module body Y ranges for OCCUPIED rails only. The lane
+  // router is only safe when the wire's safe-span (between endpoints, minus
+  // the lift margin) doesn't cross any of these — otherwise the horizontal
+  // middle leg would run through module bodies. Empty rails aren't obstacles.
   const railBodies: Array<[number, number]> = [];
+  const occupiedRails = new Set(
+    scheme.modules
+      .filter((m) => m.rail >= 1 && m.rail <= layout.railCount)
+      .map((m) => m.rail),
+  );
   for (let r = 1; r <= layout.railCount; r++) {
+    if (!occupiedRails.has(r)) continue;
     const top = railModuleTopY(r);
     railBodies.push([top, top + MODULE_HEIGHT_REM]);
   }
@@ -847,23 +860,77 @@ function WiringLayer({
   };
 
   const laneMeta = new Map<string, WireLaneMeta>();
-  const routedByZone = new Map<number, { id: string; dist: number }[]>();
+  // Bucket key includes the conductor so L wires never share a horizontal Y
+  // with N or PE wires in the same safe band — see CONDUCTOR_LANE_BIAS in
+  // routedPath.
+  const routedByBucket = new Map<
+    string,
+    { id: string; dist: number; zoneIdx: number }[]
+  >();
+  // Wires whose safe-span crosses a module body fall back to manhattanPath.
+  // We still want to spread them so identical-endpoints bundles don't stack
+  // on a single Y. Group by conductor and assign each one a midY offset.
+  const fallbackByConductor = new Map<
+    "L" | "N" | "PE",
+    { id: string; dist: number }[]
+  >();
   for (const w of scheme.wires) {
     if (!w.routed) continue;
     const a = endpointPos(w.from);
     const b = endpointPos(w.to);
     if (!a || !b) continue;
-    if (!laneIsSafe(a, b)) continue; // falls back to manhattanPath
+    if (!laneIsSafe(a, b)) {
+      const bucket = fallbackByConductor.get(w.conductor) ?? [];
+      bucket.push({ id: w.id, dist: Math.abs(a.x - b.x) });
+      fallbackByConductor.set(w.conductor, bucket);
+      continue;
+    }
     const zoneIdx = pickZoneIndex(a, b, layout);
-    const bucket = routedByZone.get(zoneIdx) ?? [];
-    bucket.push({ id: w.id, dist: Math.abs(a.x - b.x) });
-    routedByZone.set(zoneIdx, bucket);
+    const key = `${zoneIdx}:${w.conductor}`;
+    const bucket = routedByBucket.get(key) ?? [];
+    bucket.push({ id: w.id, dist: Math.abs(a.x - b.x), zoneIdx });
+    routedByBucket.set(key, bucket);
   }
-  for (const [zoneIdx, bucket] of routedByZone) {
+  for (const bucket of routedByBucket.values()) {
     bucket.sort((x, y) => x.dist - y.dist);
     bucket.forEach((e, rank) => {
-      laneMeta.set(e.id, { rank, size: bucket.length, zoneIdx });
+      laneMeta.set(e.id, { rank, size: bucket.length, zoneIdx: e.zoneIdx });
     });
+  }
+  const fallbackMidYOffsets = new Map<string, number>();
+  const fallbackPreferredColumnX = new Map<string, number>();
+  // Base Y bias per conductor so L and N fallback paths never share a Y
+  // stripe. Intra-conductor step is kept tight enough that two L wires never
+  // wander into the N stripe (and vice versa).
+  const CONDUCTOR_FALLBACK_BIAS: Record<"L" | "N" | "PE", number> = {
+    L: -0.4,
+    N: 0.4,
+    PE: 0.8,
+  };
+  for (const [conductor, bucket] of fallbackByConductor) {
+    bucket.sort((x, y) => x.dist - y.dist);
+    const midRank = (bucket.length - 1) / 2;
+    bucket.forEach((e, rank) => {
+      fallbackMidYOffsets.set(
+        e.id,
+        CONDUCTOR_FALLBACK_BIAS[conductor] + (rank - midRank) * 0.3,
+      );
+    });
+  }
+  // Per-wire preferred column for fallback paths — pick the nearest inter-module
+  // gap to the wire's horizontal midpoint, so the vertical leg of the manhattan
+  // path runs through a visible gap between modules instead of through a far
+  // side channel.
+  for (const w of scheme.wires) {
+    if (!w.routed) continue;
+    if (laneMeta.has(w.id)) continue;
+    const a = endpointPos(w.from);
+    const b = endpointPos(w.to);
+    if (!a || !b) continue;
+    fallbackPreferredColumnX.set(
+      w.id,
+      nearestGapX((a.x + b.x) / 2, layout.slotGapsX),
+    );
   }
 
   const pending = scheme.pendingFrom;
@@ -904,6 +971,8 @@ function WiringLayer({
             obstacles={obstacles}
             layout={layout}
             laneMeta={laneMeta.get(w.id)}
+            fallbackMidYOffset={fallbackMidYOffsets.get(w.id)}
+            fallbackPreferredColumnX={fallbackPreferredColumnX.get(w.id)}
           />
         );
       })}
