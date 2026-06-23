@@ -12,6 +12,7 @@ import {
   generatorFixture,
   inverterFixture,
   type PanelMode,
+  type PanelVisibility,
   type PlacedModule,
   type Scheme,
   type SourceState,
@@ -26,6 +27,7 @@ interface SerializedScheme {
   modules: PlacedModule[];
   wires: Wire[];
   source: SourceState;
+  visibility?: PanelVisibility;
 }
 
 function isObject(x: unknown): x is Record<string, unknown> {
@@ -52,6 +54,7 @@ export function serializeScheme(scheme: Scheme): SerializedScheme {
     modules: scheme.modules,
     wires: scheme.wires,
     source: scheme.source,
+    visibility: scheme.visibility,
   };
 }
 
@@ -75,7 +78,7 @@ export function deserializeScheme(data: SerializedScheme): Scheme {
     modules,
     wires: data.wires,
     source: { ...defaultSource(), ...data.source },
-    visibility: defaultVisibility(),
+    visibility: { ...defaultVisibility(), ...data.visibility },
     selectedId: null,
     selectedWireId: null,
     pendingFrom: null,

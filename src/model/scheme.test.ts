@@ -10,6 +10,7 @@ import {
   type Endpoint,
   type Scheme,
 } from "./scheme";
+import { deserializeScheme, serializeScheme } from "./persistence";
 
 function wire(scheme: Scheme, from: Endpoint, to: Endpoint): Scheme {
   const next = schemeReducer(scheme, { type: "add_wire", from, to });
@@ -134,5 +135,45 @@ describe("schemeReducer — set_visibility", () => {
     s = schemeReducer(s, { type: "set_visibility", patch: { busL: true } });
     expect(s.wires).toHaveLength(0);
     expect(s.visibility.busL).toBe(true);
+  });
+});
+
+describe("persistence — visibility round-trip", () => {
+  it("serializeScheme includes the current visibility", () => {
+    const s = schemeReducer(emptyScheme(), {
+      type: "set_visibility",
+      patch: { busPE: false },
+    });
+    const data = serializeScheme(s);
+    expect(data.visibility).toEqual(s.visibility);
+  });
+
+  it("deserializeScheme defaults missing visibility to all-visible (legacy saves)", () => {
+    const data = serializeScheme(emptyScheme());
+    // Simulate an old save made before this field existed. `visibility` is
+    // optional on SerializedScheme, so `delete` needs no cast.
+    delete data.visibility;
+    const restored = deserializeScheme(data);
+    expect(restored.visibility).toEqual({
+      busL: true,
+      busPE: true,
+      generator: true,
+      inverter: true,
+    });
+  });
+
+  it("deserializeScheme preserves an explicitly saved visibility", () => {
+    const s = schemeReducer(emptyScheme(), {
+      type: "set_visibility",
+      patch: { generator: false, busPE: false },
+    });
+    const data = serializeScheme(s);
+    const restored = deserializeScheme(data);
+    expect(restored.visibility).toEqual({
+      busL: true,
+      busPE: false,
+      generator: false,
+      inverter: true,
+    });
   });
 });

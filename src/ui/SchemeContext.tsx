@@ -27,7 +27,7 @@ export function SchemeProvider({ children }: { children: ReactNode }) {
   // are cheap to re-save, so we don't bother debouncing for MVP.
   useEffect(() => {
     saveToStorage(scheme);
-  }, [scheme.modules, scheme.wires, scheme.source]);
+  }, [scheme.modules, scheme.wires, scheme.source, scheme.visibility]);
 
   const value = useMemo<SchemeContextValue>(
     () => ({ scheme, dispatch }),
