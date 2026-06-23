@@ -1089,7 +1089,10 @@ function WiringLayer({
     return modulePos.get(endpointKey(ep)) ?? null;
   };
 
-  const obstacles: ModuleRect[] = scheme.modules
+  const obstacles: ModuleRect[] = visibleModulesOf(
+    scheme.modules,
+    scheme.visibility,
+  )
     .filter((m) => m.kind !== "source")
     .map((m) => moduleRect(m, layout));
 
@@ -1311,7 +1314,7 @@ function WiringLayer({
       })}
 
       {/* module + fixture terminal dots */}
-      {scheme.modules.flatMap((m) =>
+      {visibleModulesOf(scheme.modules, scheme.visibility).flatMap((m) =>
         terminalsFor(m.kind).map((t) => {
           const ep: Endpoint = {
             kind: "module",
@@ -1334,7 +1337,7 @@ function WiringLayer({
       )}
 
       {/* bus taps */}
-      {BUSES.flatMap((bus) =>
+      {visibleBusesOf(scheme.visibility).flatMap((bus) =>
         Array.from({ length: busTapCount(bus, layout) }, (_, i) => {
           const ep: Endpoint = { kind: "bus", bus, tapIndex: i };
           const pos = busTapPosition(bus, i, layout);
