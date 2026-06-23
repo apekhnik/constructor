@@ -406,6 +406,7 @@ export type SchemeAction =
   | { type: "set_source"; patch: Partial<SourceState> }
   | { type: "set_trip"; id: string; reason: TripReason }
   | { type: "set_panel_mode"; mode: PanelMode }
+  | { type: "set_visibility"; patch: Partial<PanelVisibility> }
   | { type: "load"; scheme: Scheme }
   | { type: "clear" };
 
@@ -698,6 +699,23 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
           scheme.selectedId && dropSet.has(scheme.selectedId)
             ? null
             : scheme.selectedId,
+        selectedWireId:
+          scheme.selectedWireId && droppedWireIds.has(scheme.selectedWireId)
+            ? null
+            : scheme.selectedWireId,
+        pendingFrom: null,
+      };
+    }
+    case "set_visibility": {
+      const { next, droppedWireIds } = visibilityImpact(scheme, action.patch);
+      const selectedIsHiddenFixture =
+        (scheme.selectedId === "fixture_generator" && !next.generator) ||
+        (scheme.selectedId === "fixture_inverter" && !next.inverter);
+      return {
+        ...scheme,
+        visibility: next,
+        wires: scheme.wires.filter((w) => !droppedWireIds.has(w.id)),
+        selectedId: selectedIsHiddenFixture ? null : scheme.selectedId,
         selectedWireId:
           scheme.selectedWireId && droppedWireIds.has(scheme.selectedWireId)
             ? null

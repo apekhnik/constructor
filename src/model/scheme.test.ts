@@ -79,3 +79,60 @@ describe("visibilityImpact", () => {
     );
   });
 });
+
+describe("schemeReducer — set_visibility", () => {
+  it("hiding busL drops only wires on bus L, keeps bus N wires", () => {
+    let s = emptyScheme();
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), busTap("L", 0));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), busTap("N", 0));
+    s = schemeReducer(s, { type: "set_visibility", patch: { busL: false } });
+    expect(s.wires).toHaveLength(1);
+    expect(s.wires[0].conductor).toBe("N");
+    expect(s.visibility.busL).toBe(false);
+  });
+
+  it("clears selectedId when the selected generator is hidden", () => {
+    let s = emptyScheme();
+    s = schemeReducer(s, { type: "select", id: "fixture_generator" });
+    expect(s.selectedId).toBe("fixture_generator");
+    s = schemeReducer(s, {
+      type: "set_visibility",
+      patch: { generator: false },
+    });
+    expect(s.selectedId).toBeNull();
+  });
+
+  it("does not clear selectedId for an unrelated module", () => {
+    let s = emptyScheme();
+    s = schemeReducer(s, { type: "select", id: GRID_SOURCE_ID });
+    s = schemeReducer(s, {
+      type: "set_visibility",
+      patch: { generator: false },
+    });
+    expect(s.selectedId).toBe(GRID_SOURCE_ID);
+  });
+
+  it("clears selectedWireId when the selected wire is dropped", () => {
+    let s = emptyScheme();
+    s = wire(s, modTerm("fixture_generator", "out_L"), busTap("L", 0));
+    const wireId = s.wires[0].id;
+    s = schemeReducer(s, { type: "select_wire", id: wireId });
+    expect(s.selectedWireId).toBe(wireId);
+    s = schemeReducer(s, {
+      type: "set_visibility",
+      patch: { generator: false },
+    });
+    expect(s.selectedWireId).toBeNull();
+    expect(s.wires).toHaveLength(0);
+  });
+
+  it("re-enabling a hidden bus does not resurrect dropped wires", () => {
+    let s = emptyScheme();
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), busTap("L", 0));
+    s = schemeReducer(s, { type: "set_visibility", patch: { busL: false } });
+    expect(s.wires).toHaveLength(0);
+    s = schemeReducer(s, { type: "set_visibility", patch: { busL: true } });
+    expect(s.wires).toHaveLength(0);
+    expect(s.visibility.busL).toBe(true);
+  });
+});

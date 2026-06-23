@@ -6,6 +6,7 @@
 import {
   DEFAULT_PANEL_MODE,
   defaultSource,
+  defaultVisibility,
   emptyScheme,
   GRID_SOURCE_ID,
   generatorFixture,
@@ -74,6 +75,7 @@ export function deserializeScheme(data: SerializedScheme): Scheme {
     modules,
     wires: data.wires,
     source: { ...defaultSource(), ...data.source },
+    visibility: defaultVisibility(),
     selectedId: null,
     selectedWireId: null,
     pendingFrom: null,
