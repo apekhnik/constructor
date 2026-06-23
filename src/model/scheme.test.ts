@@ -1,0 +1,81 @@
+// Tests for scheme.ts visibility toggles (hide L/PE busbars and
+// generator/inverter when a scheme doesn't need them).
+
+import { describe, expect, it } from "vitest";
+import {
+  GRID_SOURCE_ID,
+  emptyScheme,
+  schemeReducer,
+  visibilityImpact,
+  type Endpoint,
+  type Scheme,
+} from "./scheme";
+
+function wire(scheme: Scheme, from: Endpoint, to: Endpoint): Scheme {
+  const next = schemeReducer(scheme, { type: "add_wire", from, to });
+  if (next === scheme) {
+    throw new Error(
+      `add_wire rejected: ${JSON.stringify(from)} ↔ ${JSON.stringify(to)}`,
+    );
+  }
+  return next;
+}
+
+function modTerm(moduleId: string, terminalId: string): Endpoint {
+  return { kind: "module", moduleId, terminalId };
+}
+
+function busTap(bus: "L" | "N" | "PE", i: number): Endpoint {
+  return { kind: "bus", bus, tapIndex: i };
+}
+
+describe("PanelVisibility defaults", () => {
+  it("emptyScheme() starts with everything visible", () => {
+    const s = emptyScheme();
+    expect(s.visibility).toEqual({
+      busL: true,
+      busPE: true,
+      generator: true,
+      inverter: true,
+    });
+  });
+});
+
+describe("visibilityImpact", () => {
+  it("is empty when the hidden element has no wires", () => {
+    const s = emptyScheme();
+    const { droppedWireIds } = visibilityImpact(s, { generator: false });
+    expect(droppedWireIds.size).toBe(0);
+  });
+
+  it("flags wires on the L bus, but not wires on N, when hiding busL", () => {
+    let s = emptyScheme();
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), busTap("L", 0));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), busTap("N", 0));
+    const { droppedWireIds } = visibilityImpact(s, { busL: false });
+    expect(droppedWireIds.size).toBe(1);
+    const dropped = s.wires.find((w) => droppedWireIds.has(w.id));
+    expect(dropped?.conductor).toBe("L");
+  });
+
+  it("flags wires touching the generator's terminals when hiding it", () => {
+    let s = emptyScheme();
+    s = wire(s, modTerm("fixture_generator", "out_L"), busTap("L", 0));
+    s = wire(s, modTerm("fixture_generator", "out_N"), busTap("N", 0));
+    const { droppedWireIds } = visibilityImpact(s, { generator: false });
+    expect(droppedWireIds.size).toBe(2);
+  });
+
+  it("does not flag inverter wires when hiding the generator", () => {
+    let s = emptyScheme();
+    s = wire(s, modTerm("fixture_generator", "out_L"), busTap("L", 0));
+    s = wire(s, modTerm("fixture_inverter", "in_L"), busTap("L", 1));
+    const { droppedWireIds } = visibilityImpact(s, { generator: false });
+    expect(droppedWireIds.size).toBe(1);
+    const dropped = [...droppedWireIds][0];
+    const w = s.wires.find((x) => x.id === dropped)!;
+    expect(w.from.kind === "module" ? w.from.moduleId : null).toBe(
+      "fixture_generator",
+    );
+  });
+});

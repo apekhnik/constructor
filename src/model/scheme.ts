@@ -90,6 +90,23 @@ export const defaultSource = (): SourceState => ({
   short_target_id: null,
 });
 
+// Optional panel elements the user can hide to reduce visual clutter when
+// a scheme doesn't need them. N stays always-visible — no scheme is
+// meaningfully buildable without it.
+export interface PanelVisibility {
+  busL: boolean;
+  busPE: boolean;
+  generator: boolean;
+  inverter: boolean;
+}
+
+export const defaultVisibility = (): PanelVisibility => ({
+  busL: true,
+  busPE: true,
+  generator: true,
+  inverter: true,
+});
+
 export type Endpoint =
   | { kind: "module"; moduleId: string; terminalId: string }
   | { kind: "bus"; bus: "L" | "N" | "PE"; tapIndex: number };
@@ -113,6 +130,7 @@ export interface Scheme {
   selectedWireId: string | null;
   pendingFrom: Endpoint | null;
   source: SourceState;
+  visibility: PanelVisibility;
 }
 
 function gridSourceFixture(): PlacedModule {
@@ -168,6 +186,7 @@ export const emptyScheme = (mode: PanelMode = DEFAULT_PANEL_MODE): Scheme => ({
   selectedWireId: null,
   pendingFrom: null,
   source: defaultSource(),
+  visibility: defaultVisibility(),
 });
 
 const RAIL_PLACEABLE: ReadonlySet<ComponentKind> = new Set([
@@ -441,6 +460,34 @@ function removeWiresAttachedTo(wires: Wire[], moduleId: string): Wire[] {
       !(w.from.kind === "module" && w.from.moduleId === moduleId) &&
       !(w.to.kind === "module" && w.to.moduleId === moduleId),
   );
+}
+
+// What wires would be dropped if `patch` were applied to scheme.visibility?
+// Pure preview — caller (SchemeSettingsPanel) confirms before dispatching
+// `set_visibility`, mirroring panelModeImpact's UX. Also returns `next`
+// (the merged visibility) so the reducer case doesn't recompute the merge.
+export function visibilityImpact(
+  scheme: Scheme,
+  patch: Partial<PanelVisibility>,
+): { next: PanelVisibility; droppedWireIds: Set<string> } {
+  const next = { ...scheme.visibility, ...patch };
+  const endpointTouchesHidden = (ep: Endpoint): boolean => {
+    if (ep.kind === "bus") {
+      if (ep.bus === "L") return !next.busL;
+      if (ep.bus === "PE") return !next.busPE;
+      return false; // N bus is always visible
+    }
+    if (ep.moduleId === "fixture_generator") return !next.generator;
+    if (ep.moduleId === "fixture_inverter") return !next.inverter;
+    return false;
+  };
+  const droppedWireIds = new Set<string>();
+  for (const w of scheme.wires) {
+    if (endpointTouchesHidden(w.from) || endpointTouchesHidden(w.to)) {
+      droppedWireIds.add(w.id);
+    }
+  }
+  return { next, droppedWireIds };
 }
 
 export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
