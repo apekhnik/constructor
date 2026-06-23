@@ -8,6 +8,8 @@ import {
   defaultSource,
   emptyScheme,
   GRID_SOURCE_ID,
+  generatorFixture,
+  inverterFixture,
   type PanelMode,
   type PlacedModule,
   type Scheme,
@@ -57,9 +59,19 @@ export function deserializeScheme(data: SerializedScheme): Scheme {
     data.panelMode === "small" || data.panelMode === "large"
       ? data.panelMode
       : DEFAULT_PANEL_MODE;
+
+  // Add generator and inverter fixtures if they are missing (for backward compatibility)
+  const modules = [...data.modules];
+  if (!modules.some((m) => m.id === "fixture_generator")) {
+    modules.push(generatorFixture());
+  }
+  if (!modules.some((m) => m.id === "fixture_inverter")) {
+    modules.push(inverterFixture());
+  }
+
   return {
     panelMode: mode,
-    modules: data.modules,
+    modules,
     wires: data.wires,
     source: { ...defaultSource(), ...data.source },
     selectedId: null,

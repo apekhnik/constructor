@@ -37,8 +37,8 @@ function undervoltageDelayMs(u: number, uMin: number): number {
 
 interface EnergizedNode {
   voltage_V: number;
-  // Which physical source feeds this node (grid or generator).
-  source: "grid" | "generator";
+  // Which physical source feeds this node (grid, generator or inverter).
+  source: "grid" | "generator" | "inverter";
 }
 
 // Find the nodes that the source/generator feed directly (before propagation
@@ -48,6 +48,7 @@ function seedFeeds(
   scheme: Scheme,
   graph: SchemeGraph,
   src: SourceState,
+  inverterBypasses: Set<string>,
 ): { L: Map<string, EnergizedNode>; N: Set<string> } {
   const L = new Map<string, EnergizedNode>();
   const N = new Set<string>();
@@ -65,17 +66,29 @@ function seedFeeds(
     }
   }
 
-  if (src.gen_active) {
-    // Each three-way switch carries a virtual generator feed at in_L_gen/in_N_gen.
-    for (const m of scheme.modules) {
-      if (m.kind !== "three_way_switch") continue;
-      const nodeL = graph.nodeOfTerminal(m.id, "in_L_gen");
-      const nodeN = graph.nodeOfTerminal(m.id, "in_N_gen");
-      // Generator is never affected by upstream neutral_break.
-      if (!L.has(nodeL)) {
-        L.set(nodeL, { voltage_V: src.gen_voltage_V, source: "generator" });
+  // Generator module is the physical source
+  const generator = scheme.modules.find((m) => m.kind === "generator");
+  if (generator && generator.on && !generator.tripped) {
+    const bottom = graph.bottomNodes(generator.id);
+    if (bottom.L) {
+      L.set(bottom.L, { voltage_V: src.gen_voltage_V, source: "generator" });
+    }
+    if (bottom.N) {
+      N.add(bottom.N);
+    }
+  }
+
+  // Inverters in battery mode generate power at their output terminals
+  for (const m of scheme.modules) {
+    if (m.kind !== "inverter") continue;
+    if (m.on && !m.tripped && !inverterBypasses.has(m.id)) {
+      const bottom = graph.bottomNodes(m.id);
+      if (bottom.L) {
+        L.set(bottom.L, { voltage_V: 230, source: "inverter" });
       }
-      N.add(nodeN);
+      if (bottom.N) {
+        N.add(bottom.N);
+      }
     }
   }
 
@@ -83,11 +96,54 @@ function seedFeeds(
 }
 
 // Compute L-energy map across all nodes by propagating from feeds.
-// The graph is already a union-find: a feed on node R means every endpoint
-// whose canonical node is R is energized.
-function energizedSets(scheme: Scheme, graph: SchemeGraph, src: SourceState) {
-  const { L: lFeeds, N: nFeeds } = seedFeeds(scheme, graph, src);
-  return { L: lFeeds, N: nFeeds };
+// Uses a two-pass resolution to determine inverter bypass vs battery modes.
+function energizedSets(scheme: Scheme, src: SourceState) {
+  // 1. Build a temporary graph to determine bypasses
+  const graphTemp = buildGraph(scheme, { inverterBypasses: new Set() });
+  
+  // Feed grid and generator on graphTemp
+  const L_temp = new Map<string, EnergizedNode>();
+  const N_temp = new Set<string>();
+
+  if (src.grid_active) {
+    const source = scheme.modules.find((m) => m.id === GRID_SOURCE_ID);
+    if (source) {
+      const bottom = graphTemp.bottomNodes(source.id);
+      if (bottom.L) {
+        L_temp.set(bottom.L, { voltage_V: src.grid_voltage_V, source: "grid" });
+      }
+      if (bottom.N && !src.neutral_break) {
+        N_temp.add(bottom.N);
+      }
+    }
+  }
+
+  const generator = scheme.modules.find((m) => m.kind === "generator");
+  if (generator && generator.on && !generator.tripped) {
+    const bottom = graphTemp.bottomNodes(generator.id);
+    if (bottom.L) {
+      L_temp.set(bottom.L, { voltage_V: src.gen_voltage_V, source: "generator" });
+    }
+    if (bottom.N) {
+      N_temp.add(bottom.N);
+    }
+  }
+
+  const inverterBypasses = new Set<string>();
+  for (const m of scheme.modules) {
+    if (m.kind !== "inverter") continue;
+    const inL = graphTemp.nodeOfTerminal(m.id, "in_L");
+    const inN = graphTemp.nodeOfTerminal(m.id, "in_N");
+    if (L_temp.has(inL) && N_temp.has(inN)) {
+      inverterBypasses.add(m.id);
+    }
+  }
+
+  // 2. Build final graph and resolve seeds
+  const graph = buildGraph(scheme, { inverterBypasses });
+  const { L, N } = seedFeeds(scheme, graph, src, inverterBypasses);
+
+  return { L, N, graph, inverterBypasses };
 }
 
 // ---------------- Load detection ----------------
@@ -136,6 +192,8 @@ const SWITCHING_KINDS = new Set([
   "diff_breaker",
   "rcd",
   "voltage_relay",
+  "generator",
+  "inverter",
 ]);
 
 function isSwitching(m: PlacedModule): boolean {
@@ -273,9 +331,8 @@ export function simulate(scheme: Scheme): TickResult {
   const runtime = emptyRuntime(scheme);
   const newTrips: Array<{ id: string; reason: TripReason }> = [];
 
-  const graph = buildGraph(scheme);
   const src = scheme.source;
-  const { L, N } = energizedSets(scheme, graph, src);
+  const { L, N, graph, inverterBypasses } = energizedSets(scheme, src);
 
   // ---- Per-load energization and runtime ----
   const lvs = loadViews(scheme, graph);
@@ -312,6 +369,45 @@ export function simulate(scheme: Scheme): TickResult {
   for (const m of scheme.modules) {
     if (!isSwitching(m)) continue;
     const r = runtime[m.id];
+    
+    if (m.kind === "generator") {
+      r.energized = m.on && !m.tripped;
+      r.voltage_in_V = r.energized ? src.gen_voltage_V : 0;
+      r.voltage_out_V = r.voltage_in_V;
+      
+      const loadIds = fedBy.get(m.id) ?? [];
+      const totalCurrent = loadIds
+        .map((lid) => runtime[lid]?.current_A ?? 0)
+        .reduce((a, b) => a + b, 0);
+      r.current_A = totalCurrent;
+      continue;
+    }
+
+    if (m.kind === "inverter") {
+      const top = graph.topNodes(m.id);
+      const ln = top.L ? L.get(top.L) : undefined;
+      const energized = !!ln && (!top.N || N.has(top.N));
+      r.energized = energized;
+      r.voltage_in_V = ln?.voltage_V ?? 0;
+      
+      if (m.on && !m.tripped) {
+        if (inverterBypasses.has(m.id)) {
+          r.voltage_out_V = r.voltage_in_V;
+        } else {
+          r.voltage_out_V = 230; // Battery backup mode
+        }
+      } else {
+        r.voltage_out_V = 0;
+      }
+
+      const loadIds = fedBy.get(m.id) ?? [];
+      const totalCurrent = loadIds
+        .map((lid) => runtime[lid]?.current_A ?? 0)
+        .reduce((a, b) => a + b, 0);
+      r.current_A = totalCurrent;
+      continue;
+    }
+
     const top = graph.topNodes(m.id);
     const ln = top.L ? L.get(top.L) : undefined;
     const energized = !!ln && (!top.N || N.has(top.N));

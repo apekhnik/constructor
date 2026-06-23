@@ -11,7 +11,9 @@ import type {
 } from "../model/scheme";
 
 const KIND_LABEL: Record<ComponentKind, string> = {
-  source: "Источник",
+  source: "Источник питания",
+  generator: "Резервный генератор",
+  inverter: "Гибридный инвертор",
   main_breaker: "Вводной автомат",
   rcd: "УЗО",
   diff_breaker: "Дифавтомат",
@@ -306,7 +308,7 @@ function ModuleSection({ m }: { m: PlacedModule }) {
   const { dispatch } = useScheme();
   const { runtime, recloseAt } = useEngineSnapshot();
   const rt = runtime[m.id];
-  const isFixture = m.kind === "source";
+  const isFixture = m.kind === "source" || m.kind === "generator" || m.kind === "inverter";
   const reclose = recloseAt[m.id];
   const now = useNow(reclose ? 500 : 60_000);
   const recloseSec = reclose ? Math.max(0, Math.ceil((reclose - now) / 1000)) : null;
@@ -335,7 +337,16 @@ function ModuleSection({ m }: { m: PlacedModule }) {
 
       <div className="mt-[0.35rem]">
         {isFixture ? (
-          <Row label="зона" value="ввод сети · сверху" />
+          <Row
+            label="зона"
+            value={
+              m.kind === "source"
+                ? "ввод сети · сверху"
+                : m.kind === "generator"
+                  ? "источник · слева (ряд 1)"
+                  : "накопитель · слева (ряд 2)"
+            }
+          />
         ) : (
           <Row
             label="ряд / слот"
@@ -385,7 +396,7 @@ function ModuleSection({ m }: { m: PlacedModule }) {
       {m.kind === "load" && <LoadControl m={m} />}
 
       <div className="mt-[0.5rem] flex gap-[0.5rem]">
-        {!isFixture && (
+        {m.kind !== "source" && (
           <button
             type="button"
             onClick={() => dispatch({ type: "toggle_on", id: m.id })}

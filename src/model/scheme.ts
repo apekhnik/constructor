@@ -130,9 +130,39 @@ function gridSourceFixture(): PlacedModule {
   };
 }
 
+export function generatorFixture(): PlacedModule {
+  return {
+    id: "fixture_generator",
+    kind: "generator",
+    label: "Генератор",
+    spec: "230 В · 5.5 кВт",
+    poles: 2,
+    rail: -1,
+    slot: 0,
+    on: false,
+    tripped: false,
+    trip_reason: null,
+  };
+}
+
+export function inverterFixture(): PlacedModule {
+  return {
+    id: "fixture_inverter",
+    kind: "inverter",
+    label: "Инвертор",
+    spec: "230 В · Гибридный",
+    poles: 2,
+    rail: -1,
+    slot: 1,
+    on: true,
+    tripped: false,
+    trip_reason: null,
+  };
+}
+
 export const emptyScheme = (mode: PanelMode = DEFAULT_PANEL_MODE): Scheme => ({
   panelMode: mode,
-  modules: [gridSourceFixture()],
+  modules: [gridSourceFixture(), generatorFixture(), inverterFixture()],
   wires: [],
   selectedId: null,
   selectedWireId: null,
@@ -264,11 +294,30 @@ export function endpointConductor(
   return t?.conductor ?? null;
 }
 
-export function isEndpointOccupied(ep: Endpoint, wires: Wire[]): boolean {
+export function endpointWireCount(ep: Endpoint, wires: Wire[]): number {
   const k = endpointKey(ep);
-  return wires.some(
-    (w) => endpointKey(w.from) === k || endpointKey(w.to) === k,
-  );
+  let n = 0;
+  for (const w of wires) {
+    if (endpointKey(w.from) === k) n++;
+    if (endpointKey(w.to) === k) n++;
+  }
+  return n;
+}
+
+export function isEndpointOccupied(ep: Endpoint, wires: Wire[]): boolean {
+  return endpointWireCount(ep, wires) > 0;
+}
+
+// A module screw can hold up to two conductors (real DIN automatic devices
+// routinely accept doubled wires under one clamp). Bus taps stay single-wire —
+// branching on a bus is achieved by adding another tap.
+const MAX_WIRES_PER_TERMINAL: Record<Endpoint["kind"], number> = {
+  module: 2,
+  bus: 1,
+};
+
+export function endpointFull(ep: Endpoint, wires: Wire[]): boolean {
+  return endpointWireCount(ep, wires) >= MAX_WIRES_PER_TERMINAL[ep.kind];
 }
 
 export interface ConnectCheck {
@@ -299,11 +348,15 @@ export function canConnect(
   if (cA !== cB) {
     return { ok: false, reason: `Несовместимые проводники: ${cA} ↔ ${cB}` };
   }
-  if (isEndpointOccupied(a, scheme.wires)) {
-    return { ok: false, reason: "Первая клемма уже занята" };
+  const reasonForFull = (ep: Endpoint): string =>
+    ep.kind === "bus"
+      ? "Тап шины уже занят — используйте соседнюю точку"
+      : "На клемме уже два провода — для большего числа отводов используйте шину";
+  if (endpointFull(a, scheme.wires)) {
+    return { ok: false, reason: reasonForFull(a) };
   }
-  if (isEndpointOccupied(b, scheme.wires)) {
-    return { ok: false, reason: "Клемма уже занята" };
+  if (endpointFull(b, scheme.wires)) {
+    return { ok: false, reason: reasonForFull(b) };
   }
   return { ok: true };
 }
@@ -348,7 +401,7 @@ export function panelModeImpact(
   const loads = loadSlots(mode);
   const droppedModuleIds: string[] = [];
   for (const m of scheme.modules) {
-    if (m.kind === "source") continue;
+    if (m.kind === "source" || m.kind === "generator" || m.kind === "inverter") continue;
     if (m.rail === LOAD_RAIL_INDEX) {
       if (m.slot >= loads) droppedModuleIds.push(m.id);
       continue;
@@ -413,7 +466,7 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
     case "move": {
       const m = scheme.modules.find((x) => x.id === action.id);
       if (!m) return scheme;
-      if (m.kind === "source") return scheme; // source is a fixture
+      if (m.kind === "source" || m.kind === "generator" || m.kind === "inverter") return scheme; // source, generator, inverter are fixtures
       if (m.rail !== action.rail) return scheme; // can't move across zones
       if (!canPlace(scheme, m.poles, action.rail, action.slot, m.id))
         return scheme;
@@ -426,7 +479,7 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
     }
     case "remove": {
       const target = scheme.modules.find((x) => x.id === action.id);
-      if (target?.kind === "source") return scheme; // can't delete the source
+      if (target?.kind === "source" || target?.kind === "generator" || target?.kind === "inverter") return scheme; // can't delete fixtures
       return {
         ...scheme,
         modules: scheme.modules.filter((x) => x.id !== action.id),

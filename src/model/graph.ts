@@ -52,7 +52,7 @@ export interface SchemeGraph {
 
 function moduleInternalLinks(
   m: PlacedModule,
-  opts: { structural?: boolean } = {},
+  opts: BuildGraphOptions = {},
 ): Array<[string, string]> {
   const links: Array<[string, string]> = [];
   const id = (t: string) => `mod:${m.id}:${t}`;
@@ -96,7 +96,18 @@ function moduleInternalLinks(
       // "off" → no internal connection at all.
       break;
     }
+    case "inverter": {
+      // Ground PE is always linked
+      links.push([id("in_PE"), id("out_PE")]);
+      const isBypass = opts.structural || !!opts.inverterBypasses?.has(m.id);
+      if (isBypass && armed) {
+        links.push([id("in_L"), id("out_L")]);
+        links.push([id("in_N"), id("out_N")]);
+      }
+      break;
+    }
     case "source":
+    case "generator":
     case "load":
     case "bus_din":
     case "bus_n":
@@ -110,6 +121,8 @@ export interface BuildGraphOptions {
   // If true, ignore on/tripped state — pretend every switching device is
   // armed (in_↔out_ pass-through active). Used by the structural analyzer.
   structural?: boolean;
+  // Set of inverter module IDs that currently have bypass active.
+  inverterBypasses?: Set<string>;
 }
 
 export function buildGraph(

@@ -264,6 +264,17 @@ describe("simulate — three-way switch", () => {
       modTerm(GRID_SOURCE_ID, "out_N"),
       modTerm(switchId, "in_N_grid"),
     );
+    // Wire generator feed to switch's generator input.
+    s = wire(
+      s,
+      modTerm("fixture_generator", "out_L"),
+      modTerm(switchId, "in_L_gen"),
+    );
+    s = wire(
+      s,
+      modTerm("fixture_generator", "out_N"),
+      modTerm(switchId, "in_N_gen"),
+    );
     // Switch output → load.
     s = wire(s, modTerm(switchId, "out_L"), modTerm(loadId, "in_L"));
     s = wire(s, modTerm(switchId, "out_N"), modTerm(loadId, "in_N"));
@@ -286,11 +297,12 @@ describe("simulate — three-way switch", () => {
 
   it('position "generator" with grid off and gen on → load lit from generator', () => {
     const { scheme, loadId } = buildSwitchScheme("generator");
-    const s = setSource(scheme, {
+    let s = setSource(scheme, {
       grid_active: false,
       gen_active: true,
       gen_voltage_V: 230,
     });
+    s = patchModule(s, "fixture_generator", { on: true });
     const r = simulate(s);
     expect(r.runtime[loadId].lit).toBe(true);
     expect(r.runtime[loadId].voltage_in_V).toBe(230);
@@ -305,6 +317,56 @@ describe("simulate — three-way switch", () => {
     });
     const r = simulate(s);
     expect(r.runtime[loadId].lit).toBe(false);
+  });
+});
+
+describe("simulate — inverter", () => {
+  it("inverter ON with grid ON → bypass active, load powered from grid", () => {
+    let s = emptyScheme();
+    const invId = "fixture_inverter";
+    const c = place(s, "load", 3, 0);
+    s = c.scheme;
+    const loadId = c.id;
+
+    // Wire grid to inverter input
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(invId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(invId, "in_N"));
+
+    // Wire inverter output to load
+    s = wire(s, modTerm(invId, "out_L"), modTerm(loadId, "in_L"));
+    s = wire(s, modTerm(invId, "out_N"), modTerm(loadId, "in_N"));
+
+    s = setSource(s, { grid_active: true, grid_voltage_V: 230 });
+    s = patchModule(s, invId, { on: true });
+
+    const r = simulate(s);
+    expect(r.runtime[invId].energized).toBe(true);
+    expect(r.runtime[invId].voltage_out_V).toBe(230);
+    expect(r.runtime[loadId].lit).toBe(true);
+  });
+
+  it("inverter ON with grid OFF → battery backup active, load powered from inverter battery", () => {
+    let s = emptyScheme();
+    const invId = "fixture_inverter";
+    const c = place(s, "load", 3, 0);
+    s = c.scheme;
+    const loadId = c.id;
+
+    // Wire grid to inverter input
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(invId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(invId, "in_N"));
+
+    // Wire inverter output to load
+    s = wire(s, modTerm(invId, "out_L"), modTerm(loadId, "in_L"));
+    s = wire(s, modTerm(invId, "out_N"), modTerm(loadId, "in_N"));
+
+    s = setSource(s, { grid_active: false });
+    s = patchModule(s, invId, { on: true });
+
+    const r = simulate(s);
+    expect(r.runtime[invId].energized).toBe(false);
+    expect(r.runtime[invId].voltage_out_V).toBe(230); // Battery generated
+    expect(r.runtime[loadId].lit).toBe(true);
   });
 });
 

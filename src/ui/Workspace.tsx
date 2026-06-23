@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useElementSize } from "./useElementSize";
 import { useDraggable, useDroppable, useDndMonitor } from "@dnd-kit/core";
-import { DinModule } from "./DinModule";
+import { DinModule, GeneratorBox, InverterBox } from "./DinModule";
 import { useScheme } from "./SchemeContext";
 import { useEngineSnapshot } from "./SimulationContext";
 import { isPaletteDrag, isRailDrag, type DraggableData } from "./dnd";
@@ -229,6 +229,9 @@ function SourceBox({ m }: { m: PlacedModule }) {
   const { scheme, dispatch } = useScheme();
   const selected = scheme.selectedId === m.id;
   const widthRem = moduleWidthRem(m.poles);
+  const live = scheme.source.grid_active && !scheme.source.neutral_break;
+  const voltage = live ? scheme.source.grid_voltage_V : 0;
+  const voltStr = Math.round(voltage).toString().padStart(3, " ");
   return (
     <div
       role="button"
@@ -243,23 +246,140 @@ function SourceBox({ m }: { m: PlacedModule }) {
           dispatch({ type: "select", id: m.id });
         }
       }}
-      className={`relative rounded-[3px] border-2 border-bp-cyan/70 bg-bp-surfaceTop outline-none transition-shadow ${
+      className={`group relative overflow-hidden rounded-[5px] outline-none transition-shadow ${
         selected ? "ring-2 ring-bp-cyan ring-offset-2 ring-offset-bp-bg" : ""
       }`}
       style={{
         width: `${widthRem}rem`,
         height: `${SUPPLY_MODULE_HEIGHT_REM}rem`,
+        background:
+          "linear-gradient(165deg,#2d3947 0%,#1a2330 45%,#0f161f 100%)",
+        border: "1px solid rgba(120,200,230,.35)",
+        boxShadow:
+          "0 4px 10px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.12), inset 0 -1px 0 rgba(0,0,0,.5)",
       }}
       aria-label={m.label}
       aria-pressed={selected}
     >
-      <div className="flex h-full flex-col items-center justify-center gap-[0.1rem]">
-        <span className="font-mono text-[0.5rem] uppercase tracking-widest text-bp-cyan">
-          СЕТЬ
-        </span>
-        <span className="font-mono text-[0.7rem] font-bold tracking-wider text-bp-text">
-          {m.spec}
-        </span>
+      {/* corner rivets */}
+      <span
+        className="absolute h-[0.18rem] w-[0.18rem] rounded-full"
+        style={{
+          top: "0.18rem",
+          left: "0.22rem",
+          background:
+            "radial-gradient(circle at 30% 30%, #d8dde3, #6b7480 70%, #1d2530)",
+          boxShadow: "0 0 1px rgba(0,0,0,.8)",
+        }}
+      />
+      <span
+        className="absolute h-[0.18rem] w-[0.18rem] rounded-full"
+        style={{
+          top: "0.18rem",
+          right: "0.22rem",
+          background:
+            "radial-gradient(circle at 30% 30%, #d8dde3, #6b7480 70%, #1d2530)",
+          boxShadow: "0 0 1px rgba(0,0,0,.8)",
+        }}
+      />
+      <span
+        className="absolute h-[0.18rem] w-[0.18rem] rounded-full"
+        style={{
+          bottom: "0.18rem",
+          left: "0.22rem",
+          background:
+            "radial-gradient(circle at 30% 30%, #d8dde3, #6b7480 70%, #1d2530)",
+          boxShadow: "0 0 1px rgba(0,0,0,.8)",
+        }}
+      />
+      <span
+        className="absolute h-[0.18rem] w-[0.18rem] rounded-full"
+        style={{
+          bottom: "0.18rem",
+          right: "0.22rem",
+          background:
+            "radial-gradient(circle at 30% 30%, #d8dde3, #6b7480 70%, #1d2530)",
+          boxShadow: "0 0 1px rgba(0,0,0,.8)",
+        }}
+      />
+
+      {/* glossy top highlight */}
+      <span
+        className="pointer-events-none absolute inset-x-[0.4rem] top-[0.08rem] h-[0.18rem] rounded-b-full"
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 100%)",
+        }}
+      />
+
+      {/* Live-LED tucked into the top-left corner — absolute so it never
+          shifts the digital display. */}
+      <span
+        className="absolute h-[0.32rem] w-[0.32rem] rounded-full"
+        style={{
+          top: "0.42rem",
+          left: "0.42rem",
+          background: live
+            ? "radial-gradient(circle at 30% 30%, #ffffff, #3ed46a 55%, #1f7a3d 100%)"
+            : "radial-gradient(circle at 30% 30%, #4a443a 0%, #1a1612 70%)",
+          boxShadow: live
+            ? "0 0 5px #3ed46a, inset 0 0 0 1px rgba(0,0,0,.4)"
+            : "inset 0 0 0 1px rgba(0,0,0,.5)",
+        }}
+        aria-label={live ? "под напряжением" : "обесточено"}
+        title={live ? "Сеть подана" : "Сеть отключена"}
+      />
+
+      {/* "AC" badge in the bottom-left corner — purely decorative, also
+          absolutely positioned so it can't squeeze the readout. */}
+      <span
+        className="absolute font-mono text-[0.4rem] font-semibold leading-none tracking-[0.18em] text-bp-cyan/80"
+        style={{ bottom: "0.4rem", left: "0.42rem" }}
+        aria-hidden
+      >
+        AC
+      </span>
+
+      <div className="relative flex h-full items-center justify-end px-[0.42rem] py-[0.18rem]">
+        {/* Backlit voltage window — fixed-sized so left-side decorations
+            never push it. */}
+        <div
+          className="flex flex-col items-end justify-center gap-[0.08rem] rounded-[3px] px-[0.32rem] py-[0.15rem]"
+          style={{
+            background:
+              "linear-gradient(180deg,#050a0d 0%,#0b1a22 60%,#102b34 100%)",
+            border: "1px solid rgba(0,0,0,.85)",
+            boxShadow:
+              "inset 0 1px 2px rgba(0,0,0,.85), 0 0 0 1px rgba(120,200,230,.08)",
+          }}
+        >
+          <div className="flex items-baseline gap-[0.12rem]">
+            <span
+              className="font-mono text-[0.82rem] font-bold leading-none tracking-[0.05em] tabular-nums"
+              style={{
+                color: live ? "#7cffb2" : "#3a5a4a",
+                textShadow: live
+                  ? "0 0 4px rgba(124,255,178,.7), 0 0 1px rgba(124,255,178,.9)"
+                  : "none",
+                whiteSpace: "pre",
+              }}
+            >
+              {voltStr}
+            </span>
+            <span
+              className="font-mono text-[0.45rem] font-semibold uppercase leading-none"
+              style={{ color: live ? "#7cffb2cc" : "#3a5a4a" }}
+            >
+              В
+            </span>
+          </div>
+          <span
+            className="font-mono text-[0.36rem] uppercase leading-none tracking-[0.18em]"
+            style={{ color: live ? "#7cffb288" : "#3a5a4a" }}
+          >
+            50 Гц
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -301,6 +421,74 @@ function SupplyLayer({ layout }: { layout: Layout }) {
           }}
         >
           <SourceBox m={source} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ----------------------- Left sources layer (generator & inverter) -----------------------
+
+interface LeftSourcesLayerProps {
+  modules: PlacedModule[];
+  layout: Layout;
+}
+
+function LeftSourcesLayer({ modules, layout }: LeftSourcesLayerProps) {
+  const gen = modules.find((m) => m.kind === "generator");
+  const inv = modules.find((m) => m.kind === "inverter");
+
+  return (
+    <div
+      className="absolute"
+      style={{
+        left: 0,
+        top: 0,
+        width: "9.0rem",
+        height: `${layout.panelHeightRem}rem`,
+        zIndex: 3,
+        // Outer container must not eat clicks — terminal dots in the SVG layer
+        // sit visually below the generator/inverter boxes and need to receive
+        // the click. Module bodies set their own listeners and re-enable
+        // pointer events implicitly via React's onClick.
+        pointerEvents: "none",
+      }}
+    >
+      <div
+        className="absolute -top-[1.1rem] flex items-center justify-between px-[0.1rem]"
+        style={{
+          left: "1.0rem",
+          width: "7.5rem",
+        }}
+      >
+        <div className="font-mono text-[0.55rem] uppercase tracking-widest text-bp-cyan">
+          РЕЗЕРВ / АКБ
+        </div>
+      </div>
+
+      {gen && (
+        <div
+          className="absolute"
+          style={{
+            left: "1.0rem",
+            top: `${railModuleTopY(1)}rem`,
+            pointerEvents: "auto",
+          }}
+        >
+          <GeneratorBox m={gen} />
+        </div>
+      )}
+
+      {inv && (
+        <div
+          className="absolute"
+          style={{
+            left: "1.0rem",
+            top: `${railModuleTopY(2)}rem`,
+            pointerEvents: "auto",
+          }}
+        >
+          <InverterBox m={inv} />
         </div>
       )}
     </div>
@@ -496,6 +684,10 @@ function LoadLayer({ modules, drag, layout }: LoadLayerProps) {
         top: 0,
         width: `${LOAD_COLUMN_WIDTH_REM}rem`,
         height: `${layout.loadColumnHeightRem}rem`,
+        zIndex: 2,
+        // Outer column must let clicks through to SVG dots that sit just above
+        // each LoadBox. Each module re-enables its own pointer events below.
+        pointerEvents: "none",
       }}
     >
       <div className="absolute -top-[1.1rem] left-0 right-0 flex flex-col items-center">
@@ -513,6 +705,7 @@ function LoadLayer({ modules, drag, layout }: LoadLayerProps) {
           style={{
             left: 0,
             top: `${LOAD_COLUMN_TOP_DANGLE_REM + m.slot * LOAD_ROW_PITCH_REM}rem`,
+            pointerEvents: "auto",
           }}
         >
           <LoadBox m={m} />
@@ -657,7 +850,41 @@ function BusBarsLayer({ layout }: { layout: Layout }) {
 
 const DOT_RADIUS = 5;
 
-type DotState = "idle" | "pending" | "valid" | "invalid" | "occupied";
+type DotState = "idle" | "pending" | "valid" | "invalid" | "occupied" | "full";
+
+// When two wires share a single screw terminal, each wire's polyline is
+// physically routed through a shared stem and then through its own branch tip,
+// so the conductors actually merge into a Y before going their separate ways.
+// All measurements are in rem (the polyline space used by routedPath /
+// manhattanPath).
+const FORK_STEM_REM = 0.5;
+const FORK_BRANCH_LEN_REM = 0.4;
+const FORK_SPREAD_REM = 0.5;
+
+interface ForkAttach {
+  dotCenter: { x: number; y: number };
+  stemEnd: { x: number; y: number };
+  branchTip: { x: number; y: number };
+}
+
+function makeForkAttach(
+  dot: { x: number; y: number },
+  side: "top" | "bottom",
+  branch: "left" | "right",
+): ForkAttach {
+  const dir = side === "bottom" ? 1 : -1;
+  const stemEnd = { x: dot.x, y: dot.y + dir * FORK_STEM_REM };
+  const branchTip = {
+    x: dot.x + (branch === "left" ? -FORK_SPREAD_REM : FORK_SPREAD_REM),
+    y: stemEnd.y + dir * FORK_BRANCH_LEN_REM,
+  };
+  return { dotCenter: dot, stemEnd, branchTip };
+}
+
+interface WireForkAttach {
+  from?: ForkAttach;
+  to?: ForkAttach;
+}
 
 interface WireDotProps {
   cx: number;
@@ -722,6 +949,7 @@ interface WirePathProps {
   laneMeta?: WireLaneMeta;
   fallbackMidYOffset?: number;
   fallbackPreferredColumnX?: number;
+  fork?: WireForkAttach;
 }
 
 function WirePath({
@@ -734,11 +962,17 @@ function WirePath({
   laneMeta,
   fallbackMidYOffset,
   fallbackPreferredColumnX,
+  fork,
 }: WirePathProps) {
-  const pts = laneMeta
+  // When the wire's endpoint is a doubled screw, route from/to the branch tip
+  // and stitch the shared stem segments onto the polyline so both wires
+  // physically merge into a Y before going to the dot.
+  const routerFrom = fork?.from ? fork.from.branchTip : positions.from;
+  const routerTo = fork?.to ? fork.to.branchTip : positions.to;
+  const core = laneMeta
     ? routedPath(
-        positions.from,
-        positions.to,
+        routerFrom,
+        routerTo,
         laneMeta.rank,
         laneMeta.size,
         laneMeta.zoneIdx,
@@ -746,14 +980,18 @@ function WirePath({
         wire.conductor,
       )
     : manhattanPath(
-        positions.from,
-        positions.to,
+        routerFrom,
+        routerTo,
         obstacles,
         layout,
         fallbackPreferredColumnX ?? layout.conductorChannelX[wire.conductor],
         wire.conductor === "PE",
         fallbackMidYOffset ?? 0,
       );
+  const pts: Array<{ x: number; y: number }> = [];
+  if (fork?.from) pts.push(fork.from.dotCenter, fork.from.stemEnd);
+  pts.push(...core);
+  if (fork?.to) pts.push(fork.to.stemEnd, fork.to.dotCenter);
   const pointsAttr = pts
     .map((p) => `${remToPx(p.x)},${remToPx(p.y)}`)
     .join(" ");
@@ -936,13 +1174,75 @@ function WiringLayer({
   const pending = scheme.pendingFrom;
   const pendingKey = pending ? endpointKey(pending) : null;
 
+  // Wire count + per-wire fork attachments. When a module terminal has two
+  // wires, each wire's polyline is rerouted from the relevant branch tip and
+  // grows a shared-stem prefix/suffix so the two physical jines merge into a Y
+  // before reaching the screw (CLAUDE.md §2.4 "doubled wires under one clamp").
+  const wireCountByKey = new Map<string, number>();
+  const wireIdsByKey = new Map<string, string[]>();
+  for (const w of scheme.wires) {
+    for (const ep of [w.from, w.to] as Endpoint[]) {
+      const k = endpointKey(ep);
+      wireCountByKey.set(k, (wireCountByKey.get(k) ?? 0) + 1);
+      const arr = wireIdsByKey.get(k) ?? [];
+      arr.push(w.id);
+      wireIdsByKey.set(k, arr);
+    }
+  }
+
+  const wireForks = new Map<string, WireForkAttach>();
+  for (const [key, ids] of wireIdsByKey) {
+    if (ids.length !== 2) continue;
+    if (!key.startsWith("mod:")) continue;
+    const ws = ids
+      .map((id) => scheme.wires.find((w) => w.id === id))
+      .filter((w): w is Wire => !!w);
+    if (ws.length !== 2) continue;
+    // Resolve terminal info from the first wire's matching side.
+    const w0 = ws[0];
+    const epAtFork: Endpoint =
+      endpointKey(w0.from) === key ? w0.from : w0.to;
+    if (epAtFork.kind !== "module") continue;
+    const mod = scheme.modules.find((mm) => mm.id === epAtFork.moduleId);
+    if (!mod) continue;
+    const tdef = terminalsFor(mod.kind).find(
+      (tt) => tt.id === epAtFork.terminalId,
+    );
+    if (!tdef) continue;
+    const dotPos = endpointPos(epAtFork);
+    if (!dotPos) continue;
+    // Assign left/right by the X of each wire's *other* endpoint — wires
+    // heading further left take the left branch, further right take the right
+    // branch. This minimises crossings.
+    const sides = ws.map((w) => {
+      const atIsFrom = endpointKey(w.from) === key;
+      const otherEp = atIsFrom ? w.to : w.from;
+      const otherPos = endpointPos(otherEp);
+      return { w, atIsFrom, otherX: otherPos?.x ?? 0 };
+    });
+    sides.sort((a, b) => {
+      if (a.otherX !== b.otherX) return a.otherX - b.otherX;
+      return a.w.id.localeCompare(b.w.id);
+    });
+    const branches: ("left" | "right")[] = ["left", "right"];
+    sides.forEach(({ w, atIsFrom }, i) => {
+      const attach = makeForkAttach(dotPos, tdef.side, branches[i]);
+      const existing = wireForks.get(w.id) ?? {};
+      if (atIsFrom) existing.from = attach;
+      else existing.to = attach;
+      wireForks.set(w.id, existing);
+    });
+  }
+
   const dotState = (ep: Endpoint): DotState => {
     const key = endpointKey(ep);
     if (pendingKey === key) return "pending";
-    const occupied = scheme.wires.some(
-      (w) => endpointKey(w.from) === key || endpointKey(w.to) === key,
-    );
-    if (!pending) return occupied ? "occupied" : "idle";
+    const count = wireCountByKey.get(key) ?? 0;
+    const cap = ep.kind === "module" ? 2 : 1;
+    if (!pending) {
+      if (count >= cap) return "full";
+      return count > 0 ? "occupied" : "idle";
+    }
     const check = canConnect(scheme, pending, ep);
     return check.ok ? "valid" : "invalid";
   };
@@ -973,6 +1273,7 @@ function WiringLayer({
             laneMeta={laneMeta.get(w.id)}
             fallbackMidYOffset={fallbackMidYOffsets.get(w.id)}
             fallbackPreferredColumnX={fallbackPreferredColumnX.get(w.id)}
+            fork={wireForks.get(w.id)}
           />
         );
       })}
@@ -1068,6 +1369,7 @@ export function Workspace() {
   const loadsModules = scheme.modules.filter(
     (m) => m.rail === LOAD_RAIL_INDEX,
   );
+  const leftModules = scheme.modules.filter((m) => m.rail === -1);
 
   const handleTerminalClick = (ep: Endpoint) => {
     const pending = scheme.pendingFrom;
@@ -1149,6 +1451,7 @@ export function Workspace() {
             }}
           >
             <BusBarsLayer layout={layout} />
+            <LeftSourcesLayer modules={leftModules} layout={layout} />
             <SupplyLayer layout={layout} />
             <RailLayer
               rail={1}

@@ -4,6 +4,8 @@
 
 export type ComponentKind =
   | "source"
+  | "generator"
+  | "inverter"
   | "main_breaker"
   | "rcd"
   | "diff_breaker"

@@ -77,7 +77,7 @@ export const RAIL_2_Y_REM = RAIL_1_Y_REM + RAIL_HEIGHT_REM + SECTION_GAP_REM;
 // Panel is shifted right inside the layout so there is a clear vertical lane
 // on the LEFT (used by L wires) that never touches any module body. The N
 // and PE lanes live on the RIGHT, between the panel and the load column.
-export const PANEL_LEFT_PAD_REM = 1.5;
+export const PANEL_LEFT_PAD_REM = 10.0;
 export const PANEL_COLUMN_GAP_REM = 2.8;
 const SIDE_LANE_MARGIN_REM = 0.7;
 const TOP_BUS_SIDE_PAD_REM = 0.6;
@@ -354,6 +354,14 @@ export function moduleRect(m: PlacedModule, layout: Layout): ModuleRect {
       width: LOAD_COLUMN_WIDTH_REM,
       height: LOAD_MODULE_HEIGHT_REM,
     };
+  }
+  if (m.rail === -1) {
+    // Left column sources. slot 0 = generator, slot 1 = inverter
+    const x = 1.0;
+    const y = m.slot === 0 ? railModuleTopY(1) : railModuleTopY(2);
+    const width = 7.5;
+    const height = MODULE_HEIGHT_REM;
+    return { x, y, width, height };
   }
   return {
     x: moduleX(m.slot),

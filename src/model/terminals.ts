@@ -41,6 +41,21 @@ const T_SOURCE: TerminalDef[] = [
   { id: "out_PE", role: "out_PE", conductor: "PE", side: "bottom" },
 ];
 
+const T_GENERATOR: TerminalDef[] = [
+  { id: "out_L", role: "out_L", conductor: "L", side: "bottom" },
+  { id: "out_N", role: "out_N", conductor: "N", side: "bottom" },
+  { id: "out_PE", role: "out_PE", conductor: "PE", side: "bottom" },
+];
+
+const T_INVERTER: TerminalDef[] = [
+  { id: "in_L", role: "in_L", conductor: "L", side: "top" },
+  { id: "in_N", role: "in_N", conductor: "N", side: "top" },
+  { id: "in_PE", role: "in_PE", conductor: "PE", side: "top" },
+  { id: "out_L", role: "out_L", conductor: "L", side: "bottom" },
+  { id: "out_N", role: "out_N", conductor: "N", side: "bottom" },
+  { id: "out_PE", role: "out_PE", conductor: "PE", side: "bottom" },
+];
+
 // Load: consumes L+N (and PE for the chassis) on its top edge.
 const T_LOAD: TerminalDef[] = [
   { id: "in_L", role: "in_L", conductor: "L", side: "top" },
@@ -61,6 +76,10 @@ export function terminalsFor(kind: ComponentKind): TerminalDef[] {
       return T_THREE_WAY;
     case "source":
       return T_SOURCE;
+    case "generator":
+      return T_GENERATOR;
+    case "inverter":
+      return T_INVERTER;
     case "load":
       return T_LOAD;
     default:

@@ -120,7 +120,7 @@ const SEG_POLYS: Array<[string, string]> = [
   ["g", "10,50 15,45 45,45 50,50 45,55 15,55"],
 ];
 
-function SegDigit({
+export function SegDigit({
   d,
   on = "#ff3a28",
   off = "#2a0a0a",
@@ -698,6 +698,246 @@ export function DinModule({ m, overlay = false }: DinModuleProps) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+export function GeneratorBox({ m }: { m: PlacedModule }) {
+  const { scheme, dispatch } = useScheme();
+  const snap = useEngineSnapshot();
+  const selected = scheme.selectedId === m.id;
+  const running = m.on && !m.tripped;
+  const voltage = running ? scheme.source.gen_voltage_V : 0;
+  
+  // Format voltage to 3 digits
+  const chars = String(Math.round(voltage)).padStart(3, " ").split("");
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        dispatch({ type: "select", id: m.id });
+      }}
+      className={`relative rounded-[4px] border-2 outline-none flex flex-col justify-between p-[0.6rem] ${
+        selected ? "ring-2 ring-bp-cyan ring-offset-2 ring-offset-bp-bg border-bp-cyan" : "border-plastic-lever"
+      }`}
+      style={{
+        width: "7.5rem",
+        height: "8.5rem",
+        background: "linear-gradient(135deg, #2b303c 0%, #1a1c23 100%)",
+        boxShadow: "0 4px 8px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.1)",
+      }}
+    >
+      {/* Top Header */}
+      <div className="flex flex-col items-center">
+        <span className="font-mono text-[0.42rem] tracking-[0.2em] text-bp-textDim uppercase">
+          РЕЗЕРВНЫЙ ИСТОЧНИК
+        </span>
+        <span className="font-display text-[0.7rem] font-bold text-plastic-light uppercase tracking-wide">
+          ГЕНЕРАТОР
+        </span>
+      </div>
+
+      {/* Screen / Display */}
+      <div
+        className="mx-auto flex h-[2.2rem] w-[5.0rem] items-center justify-center rounded-[3px] px-[0.4rem]"
+        style={{
+          background: "linear-gradient(180deg,#0a0807 0%,#181312 55%,#241b18 100%)",
+          boxShadow: "inset 0 1.5px 3px rgba(0,0,0,.85), 0 1px 0 rgba(255,255,255,.15)",
+        }}
+      >
+        <div className="flex items-center gap-[0.08rem] animate-segflicker">
+          {chars.map((c, i) => (
+            <SegDigit key={i} d={c} on="#ffb025" off="#2a1b0a" />
+          ))}
+          <span className="font-mono text-[0.6rem] text-[#ffb025] ml-[0.15rem]">V</span>
+        </div>
+      </div>
+
+      {/* Controls & LEDs */}
+      <div className="flex items-center justify-between px-[0.4rem]">
+        {/* Toggle Switch */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            dispatch({ type: "toggle_on", id: m.id });
+          }}
+          className={`h-[1.5rem] w-[3.0rem] rounded shadow-md border outline-none flex items-center justify-center cursor-pointer transition-all ${
+            running ? "bg-bp-ok border-bp-ok/50 text-plastic-light font-bold" : "bg-plastic-lever border-bp-line text-bp-textDim"
+          }`}
+        >
+          <span className="font-mono text-[0.45rem] tracking-widest">
+            {running ? "RUN" : "STOP"}
+          </span>
+        </button>
+
+        {/* LED Indicator */}
+        <div className="flex flex-col items-center gap-[0.1rem]">
+          <div
+            className="h-[0.5rem] w-[0.5rem] rounded-full transition-all"
+            style={{
+              background: running
+                ? "radial-gradient(circle at 30% 30%, #ffffff, #3ed46a 55%, #3ed46a 100%)"
+                : "radial-gradient(circle at 30% 30%, #4a443a 0%, #1a1612 70%)",
+              boxShadow: running
+                ? "0 0 6px #3ed46a, inset 0 0 0 1px rgba(0,0,0,.4)"
+                : "inset 0 0 0 1px rgba(0,0,0,.5)",
+            }}
+          />
+          <span className="font-mono text-[0.32rem] text-plastic-light">СТАТУС</span>
+        </div>
+      </div>
+
+      {/* Specs / Brand */}
+      <div className="flex justify-between items-end border-t border-bp-line/30 pt-[0.25rem] text-[0.42rem] font-mono text-bp-textDim">
+        <span>5.5 kW max</span>
+        <span className="text-[0.35rem]">AC 230V 50Hz</span>
+      </div>
+    </div>
+  );
+}
+
+export function InverterBox({ m }: { m: PlacedModule }) {
+  const { scheme, dispatch } = useScheme();
+  const snap = useEngineSnapshot();
+  const selected = scheme.selectedId === m.id;
+  const rt = snap.runtime[m.id];
+  const running = m.on && !m.tripped;
+
+  // Mode detection from runtime
+  const energized = rt?.energized ?? false; // Has input AC voltage
+  const vOut = rt?.voltage_out_V ?? 0;
+  const activeBypass = running && energized; // Bypass active if grid is on and inverter is on
+  const activeInverting = running && !energized; // Inverting from battery if grid is off and inverter is on
+
+  // LED States
+  // Grid LED: green if energized
+  const ledGrid = energized;
+  // Battery LED: yellow if activeInverting, off otherwise
+  const ledBattery = activeInverting;
+  // Output LED: green if vOut > 0
+  const ledOutput = vOut > 0;
+
+  // Status Screen String
+  let statusStr = "ВЫКЛ";
+  if (running) {
+    if (activeBypass) {
+      statusStr = "БАЙПАС";
+    } else {
+      statusStr = "АКБ";
+    }
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        dispatch({ type: "select", id: m.id });
+      }}
+      className={`relative rounded-[4px] border-2 outline-none flex flex-col justify-between p-[0.6rem] ${
+        selected ? "ring-2 ring-bp-cyan ring-offset-2 ring-offset-bp-bg border-bp-cyan" : "border-plastic-lever"
+      }`}
+      style={{
+        width: "7.5rem",
+        height: "8.5rem",
+        background: "linear-gradient(135deg, #1e2630 0%, #0d1219 100%)",
+        boxShadow: "0 4px 8px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.1)",
+      }}
+    >
+      {/* Top Header */}
+      <div className="flex flex-col items-center">
+        <span className="font-mono text-[0.42rem] tracking-[0.2em] text-bp-textDim uppercase">
+          НАКОПИТЕЛЬ
+        </span>
+        <span className="font-display text-[0.7rem] font-bold text-plastic-light uppercase tracking-wide">
+          ИНВЕРТОР
+        </span>
+      </div>
+
+      {/* Status Screen */}
+      <div
+        className="mx-auto flex h-[1.8rem] w-[5.5rem] items-center justify-center rounded-[2px]"
+        style={{
+          background: "#081017",
+          border: "1px solid #1a2c3d",
+          boxShadow: "inset 0 1px 3px rgba(0,0,0,.8)",
+        }}
+      >
+        <span className={`font-mono text-[0.7rem] font-bold tracking-widest ${running ? "text-bp-cyan" : "text-bp-textDim/50"}`}>
+          {statusStr}
+        </span>
+      </div>
+
+      {/* Three Status LEDs */}
+      <div className="flex justify-around px-[0.2rem]">
+        <div className="flex flex-col items-center gap-[0.08rem]">
+          <div
+            className="h-[0.35rem] w-[0.35rem] rounded-full transition-all"
+            style={{
+              background: ledGrid
+                ? "radial-gradient(circle at 30% 30%, #ffffff, #3ed46a 55%, #3ed46a 100%)"
+                : "radial-gradient(circle at 30% 30%, #2a2d35 0%, #111215 70%)",
+              boxShadow: ledGrid ? "0 0 4px #3ed46a" : "none",
+            }}
+          />
+          <span className="font-mono text-[0.32rem] text-bp-textDim">СЕТЬ</span>
+        </div>
+
+        <div className="flex flex-col items-center gap-[0.08rem]">
+          <div
+            className="h-[0.35rem] w-[0.35rem] rounded-full transition-all"
+            style={{
+              background: ledBattery
+                ? "radial-gradient(circle at 30% 30%, #ffffff, #ffb025 55%, #ffb025 100%)"
+                : "radial-gradient(circle at 30% 30%, #2a2d35 0%, #111215 70%)",
+              boxShadow: ledBattery ? "0 0 4px #ffb025" : "none",
+            }}
+          />
+          <span className="font-mono text-[0.32rem] text-bp-textDim">АКБ</span>
+        </div>
+
+        <div className="flex flex-col items-center gap-[0.08rem]">
+          <div
+            className="h-[0.35rem] w-[0.35rem] rounded-full transition-all"
+            style={{
+              background: ledOutput
+                ? "radial-gradient(circle at 30% 30%, #ffffff, #3a85d6 55%, #3a85d6 100%)"
+                : "radial-gradient(circle at 30% 30%, #2a2d35 0%, #111215 70%)",
+              boxShadow: ledOutput ? "0 0 4px #3a85d6" : "none",
+            }}
+          />
+          <span className="font-mono text-[0.32rem] text-bp-textDim">ВЫХОД</span>
+        </div>
+      </div>
+
+      {/* Controls: Switch */}
+      <div className="flex items-center justify-center">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            dispatch({ type: "toggle_on", id: m.id });
+          }}
+          className={`h-[1.3rem] w-[3.5rem] rounded shadow-md border outline-none flex items-center justify-center cursor-pointer transition-all ${
+            m.on ? "bg-bp-cyan border-bp-cyan/50 text-[#07121b] font-bold" : "bg-plastic-lever border-bp-line text-bp-textDim"
+          }`}
+        >
+          <span className="font-mono text-[0.45rem] tracking-widest">
+            {m.on ? "ON" : "OFF"}
+          </span>
+        </button>
+      </div>
+
+      {/* Specs / Brand */}
+      <div className="flex justify-between items-end border-t border-bp-line/30 pt-[0.25rem] text-[0.42rem] font-mono text-bp-textDim">
+        <span>3.0 kW max</span>
+        <span className="text-[0.35rem]">Smart UPS</span>
+      </div>
     </div>
   );
 }
