@@ -704,7 +704,7 @@ export function DinModule({ m, overlay = false }: DinModuleProps) {
 
 export function GeneratorBox({ m }: { m: PlacedModule }) {
   const { scheme, dispatch } = useScheme();
-  const snap = useEngineSnapshot();
+  // const snap = useEngineSnapshot();
   const selected = scheme.selectedId === m.id;
   const running = m.on && !m.tripped;
   const voltage = running ? scheme.source.gen_voltage_V : 0;
