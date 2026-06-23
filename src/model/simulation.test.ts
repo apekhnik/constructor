@@ -345,6 +345,44 @@ describe("simulate — inverter", () => {
     expect(r.runtime[loadId].lit).toBe(true);
   });
 
+  it("breaker feeding a bypassing inverter carries the downstream load current (not 0)", () => {
+    // Regression: loadsFedThrough() used to re-detect each inverter's
+    // bypass-vs-battery mode inside every "what if this breaker were off"
+    // hypothetical. Cutting the breaker that feeds the inverter made the
+    // hypothetical inverter "rescue" the load by switching to battery mode,
+    // so the load never appeared to die — leaving the breaker's current_A
+    // at 0 even though, right now, it is actually carrying the bypassed
+    // grid current straight through to the load.
+    let s = emptyScheme();
+    const invId = "fixture_inverter";
+    const a = place(s, "main_breaker", 1, 0);
+    s = a.scheme;
+    const breakerId = a.id;
+    const c = place(s, "load", 3, 0);
+    s = c.scheme;
+    const loadId = c.id;
+    s = patchModule(s, loadId, { power_W: 2_000 });
+
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_L"), modTerm(breakerId, "in_L"));
+    s = wire(s, modTerm(GRID_SOURCE_ID, "out_N"), modTerm(breakerId, "in_N"));
+    s = wire(s, modTerm(breakerId, "out_L"), modTerm(invId, "in_L"));
+    s = wire(s, modTerm(breakerId, "out_N"), modTerm(invId, "in_N"));
+    s = wire(s, modTerm(invId, "out_L"), modTerm(loadId, "in_L"));
+    s = wire(s, modTerm(invId, "out_N"), modTerm(loadId, "in_N"));
+
+    s = setSource(s, { grid_active: true, grid_voltage_V: 230 });
+    s = patchModule(s, invId, { on: true });
+
+    const r = simulate(s);
+    expect(r.runtime[invId].energized).toBe(true); // bypass, not battery
+    expect(r.runtime[loadId].lit).toBe(true);
+    expect(r.runtime[breakerId].current_A).toBeCloseTo(
+      r.runtime[loadId].current_A,
+      5,
+    );
+    expect(r.runtime[breakerId].current_A).toBeGreaterThan(0);
+  });
+
   it("inverter ON with grid OFF → battery backup active, load powered from inverter battery", () => {
     let s = emptyScheme();
     const invId = "fixture_inverter";

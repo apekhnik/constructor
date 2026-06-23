@@ -96,8 +96,21 @@ function seedFeeds(
 }
 
 // Compute L-energy map across all nodes by propagating from feeds.
-// Uses a two-pass resolution to determine inverter bypass vs battery modes.
-function energizedSets(scheme: Scheme, src: SourceState) {
+// Uses a two-pass resolution to determine inverter bypass vs battery modes,
+// unless `forcedInverterBypasses` is given — see loadsFedThrough for why.
+function energizedSets(
+  scheme: Scheme,
+  src: SourceState,
+  forcedInverterBypasses?: Set<string>,
+) {
+  if (forcedInverterBypasses) {
+    const graph = buildGraph(scheme, {
+      inverterBypasses: forcedInverterBypasses,
+    });
+    const { L, N } = seedFeeds(scheme, graph, src, forcedInverterBypasses);
+    return { L, N, graph, inverterBypasses: forcedInverterBypasses };
+  }
+
   // 1. Build a temporary graph to determine bypasses
   const graphTemp = buildGraph(scheme, { inverterBypasses: new Set() });
   
@@ -204,10 +217,21 @@ function isSwitching(m: PlacedModule): boolean {
 // through it. Implementation: rebuild the graph with the module's L pass-
 // through disabled and see which loads lose power. Cost is O(M*N) graph
 // builds — fine for MVP schemes (< 50 modules).
+//
+// `inverterBypasses` is the REAL (already resolved) bypass-vs-battery mode
+// for every inverter in `scheme`, computed once by the caller's top-level
+// energizedSets(). We freeze it for every hypothetical instead of letting
+// energizedSets re-detect it per hypothetical: if we let it re-detect, then
+// turning off (say) a breaker feeding an inverter that is currently in
+// bypass would make the inverter "rescue" downstream loads by switching to
+// battery mode inside the hypothetical — making that breaker look like it
+// carries zero current even though, right now, it actually carries the
+// full downstream current via the bypass path.
 function loadsFedThrough(
   scheme: Scheme,
   src: SourceState,
   baseLoads: Array<{ id: string; energized: boolean }>,
+  inverterBypasses: Set<string>,
 ): Map<string, string[]> {
   const result = new Map<string, string[]>();
   const baseEnergized = new Set(
@@ -228,8 +252,8 @@ function loadsFedThrough(
         x.id === m.id ? { ...x, on: false } : x,
       ),
     };
-    const graphH = buildGraph(hypothetical);
-    const { L: lH, N: nH } = energizedSets(hypothetical, src);
+    const graphH = buildGraph(hypothetical, { inverterBypasses });
+    const { L: lH, N: nH } = energizedSets(hypothetical, src, inverterBypasses);
     const livesH = new Set<string>();
     for (const lv of loadViews(hypothetical, graphH)) {
       if (loadEnergized(lv, lH, nH).energized) livesH.add(lv.module.id);
@@ -364,7 +388,7 @@ export function simulate(scheme: Scheme): TickResult {
     id: lr.id,
     energized: lr.info.energized,
   }));
-  const fedBy = loadsFedThrough(scheme, src, baseLoadEnergized);
+  const fedBy = loadsFedThrough(scheme, src, baseLoadEnergized, inverterBypasses);
 
   for (const m of scheme.modules) {
     if (!isSwitching(m)) continue;
