@@ -49,6 +49,7 @@ import {
   placementRailsFor,
   railCount,
   type Endpoint,
+  type PanelVisibility,
   type PlacedModule,
   type Scheme,
   type Wire,
@@ -68,6 +69,31 @@ const CONDUCTOR_DOT: Record<"L" | "N" | "PE", string> = {
   N: "#5fa3e8",
   PE: "#e6c34a",
 };
+
+// ----------------------- Visibility filters -----------------------
+// Shared by Workspace() (which modules/buses to lay out) and WiringLayer
+// (which terminal dots/taps are clickable). The reducer (scheme.ts) already
+// guarantees no wire references a hidden bus/fixture, so filtering here is
+// purely about what gets drawn.
+
+function visibleModulesOf(
+  modules: PlacedModule[],
+  visibility: PanelVisibility,
+): PlacedModule[] {
+  return modules.filter((m) => {
+    if (m.kind === "generator") return visibility.generator;
+    if (m.kind === "inverter") return visibility.inverter;
+    return true;
+  });
+}
+
+function visibleBusesOf(visibility: PanelVisibility): BusName[] {
+  return BUSES.filter((b) => {
+    if (b === "L") return visibility.busL;
+    if (b === "PE") return visibility.busPE;
+    return true; // N is always visible
+  });
+}
 
 // ----------------------- Drag info -----------------------
 
@@ -836,10 +862,16 @@ function BusBar({ bus, layout }: { bus: BusName; layout: Layout }) {
   );
 }
 
-function BusBarsLayer({ layout }: { layout: Layout }) {
+function BusBarsLayer({
+  layout,
+  buses,
+}: {
+  layout: Layout;
+  buses: readonly BusName[];
+}) {
   return (
     <>
-      {BUSES.map((bus) => (
+      {buses.map((bus) => (
         <BusBar key={bus} bus={bus} layout={layout} />
       ))}
     </>
@@ -1360,6 +1392,9 @@ export function Workspace() {
 
   const drag = dragInfo(activeDrag, scheme);
 
+  const visibleModules = visibleModulesOf(scheme.modules, scheme.visibility);
+  const visibleBuses = visibleBusesOf(scheme.visibility);
+
   const rails = railCount(scheme.panelMode);
   const railsModules: PlacedModule[][] = Array.from(
     { length: rails },
@@ -1369,7 +1404,7 @@ export function Workspace() {
   const loadsModules = scheme.modules.filter(
     (m) => m.rail === LOAD_RAIL_INDEX,
   );
-  const leftModules = scheme.modules.filter((m) => m.rail === -1);
+  const leftModules = visibleModules.filter((m) => m.rail === -1);
 
   const handleTerminalClick = (ep: Endpoint) => {
     const pending = scheme.pendingFrom;
@@ -1450,7 +1485,7 @@ export function Workspace() {
               transformOrigin: "top left",
             }}
           >
-            <BusBarsLayer layout={layout} />
+            <BusBarsLayer layout={layout} buses={visibleBuses} />
             <LeftSourcesLayer modules={leftModules} layout={layout} />
             <SupplyLayer layout={layout} />
             <RailLayer
