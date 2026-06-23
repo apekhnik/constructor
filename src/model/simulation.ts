@@ -169,7 +169,7 @@ function loadViews(scheme: Scheme, graph: SchemeGraph): LoadView[] {
 interface LoadEnergized {
   energized: boolean;
   voltage_V: number;
-  source: "grid" | "generator" | null;
+  source: "grid" | "generator" | "inverter" | null;
 }
 
 function loadEnergized(
@@ -229,7 +229,7 @@ function loadsFedThrough(
       ),
     };
     const graphH = buildGraph(hypothetical);
-    const { L: lH, N: nH } = energizedSets(hypothetical, graphH, src);
+    const { L: lH, N: nH } = energizedSets(hypothetical, src);
     const livesH = new Set<string>();
     for (const lv of loadViews(hypothetical, graphH)) {
       if (loadEnergized(lv, lH, nH).energized) livesH.add(lv.module.id);
