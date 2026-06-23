@@ -12,6 +12,7 @@ import {
 import { Palette } from "./ui/Palette";
 import { Workspace, LoadBox } from "./ui/Workspace";
 import { LogPanel } from "./ui/LogPanel";
+import { SchemeSettingsPanel } from "./ui/SchemeSettingsPanel";
 import { TestPanel } from "./ui/TestPanel";
 import { Inspector } from "./ui/Inspector";
 import { DinModule } from "./ui/DinModule";
@@ -292,6 +293,7 @@ function Shell() {
           <aside className="flex h-full w-[20rem] shrink-0 flex-col border-l border-bp-line bg-bp-surfaceTransparent">
             <Inspector />
             <LogPanel entries={toLogEntries(diagnostics)} />
+            <SchemeSettingsPanel />
           </aside>
         </div>
       </div>
