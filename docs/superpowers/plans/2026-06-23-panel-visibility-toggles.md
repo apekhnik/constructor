@@ -546,12 +546,20 @@ Expected: FAIL — `data.visibility` не существует на типе `Se
 
 - [ ] **Step 3: Обновить `SerializedScheme` и serialize/deserialize**
 
+> Примечание: Task 1 уже добавил импорт `defaultVisibility` и временную
+> строку `visibility: defaultVisibility(),` в `deserializeScheme` — это
+> было необходимо, чтобы `Scheme` (расширенный новым полем `visibility` в
+> Task 1) собирался без ошибок TypeScript ещё до того, как до
+> персистентности дошла очередь. Поэтому "найти"-блоки ниже отражают
+> текущее состояние файла ПОСЛЕ Task 1, а не состояние до него.
+
 В `src/model/persistence.ts` найти импорт:
 
 ```ts
 import {
   DEFAULT_PANEL_MODE,
   defaultSource,
+  defaultVisibility,
   emptyScheme,
   GRID_SOURCE_ID,
   generatorFixture,
@@ -564,7 +572,8 @@ import {
 } from "./scheme";
 ```
 
-Заменить на:
+Заменить на (добавляется только `type PanelVisibility` — `defaultVisibility`
+уже импортирован):
 
 ```ts
 import {
@@ -638,7 +647,8 @@ export function serializeScheme(scheme: Scheme): SerializedScheme {
 }
 ```
 
-Найти в `deserializeScheme`:
+Найти в `deserializeScheme` (обратите внимание — строка `visibility:
+defaultVisibility(),` уже добавлена Task 1, без мержа `data.visibility`):
 
 ```ts
   return {
@@ -646,6 +656,7 @@ export function serializeScheme(scheme: Scheme): SerializedScheme {
     modules,
     wires: data.wires,
     source: { ...defaultSource(), ...data.source },
+    visibility: defaultVisibility(),
     selectedId: null,
     selectedWireId: null,
     pendingFrom: null,
