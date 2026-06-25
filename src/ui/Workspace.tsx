@@ -55,6 +55,7 @@ import {
   type Wire,
 } from "../model/scheme";
 import type { ComponentKind } from "../model/types";
+import { routeWires, type RoutedPath } from "../wiring/jointjs";
 
 const RAIL_TITLES = ["ВВОД И ЗАЩИТА", "ОТХОДЯЩИЕ ЛИНИИ"];
 
@@ -982,6 +983,10 @@ interface WirePathProps {
   fallbackMidYOffset?: number;
   fallbackPreferredColumnX?: number;
   fork?: WireForkAttach;
+  // JointJS spike: pre-computed polyline (in rem) for wires flagged with
+  // `routed_v2`. When present, takes precedence over routedPath /
+  // manhattanPath. Forks are still stitched on either side.
+  routedV2Path?: RoutedPath;
 }
 
 function WirePath({
@@ -995,13 +1000,16 @@ function WirePath({
   fallbackMidYOffset,
   fallbackPreferredColumnX,
   fork,
+  routedV2Path,
 }: WirePathProps) {
   // When the wire's endpoint is a doubled screw, route from/to the branch tip
   // and stitch the shared stem segments onto the polyline so both wires
   // physically merge into a Y before going to the dot.
   const routerFrom = fork?.from ? fork.from.branchTip : positions.from;
   const routerTo = fork?.to ? fork.to.branchTip : positions.to;
-  const core = laneMeta
+  const core = routedV2Path
+    ? routedV2Path
+    : laneMeta
     ? routedPath(
         routerFrom,
         routerTo,
@@ -1069,6 +1077,14 @@ function WiringLayer({
 }: WiringLayerProps) {
   const W = remToPx(layout.layoutWidthRem);
   const H = remToPx(layout.layoutHeightRem);
+
+  // JointJS spike: compute routes for routed_v2 wires once per scheme change.
+  // The adapter is an off-DOM joint.dia.Paper; everything not flagged stays
+  // on the existing manhattan/lane router below.
+  const routedV2 = useMemo(
+    () => routeWires(scheme, layout),
+    [scheme, layout],
+  );
 
   const modulePos = new Map<string, { x: number; y: number }>();
   for (const m of scheme.modules) {
@@ -1309,6 +1325,7 @@ function WiringLayer({
             fallbackMidYOffset={fallbackMidYOffsets.get(w.id)}
             fallbackPreferredColumnX={fallbackPreferredColumnX.get(w.id)}
             fork={wireForks.get(w.id)}
+            routedV2Path={w.routed_v2 ? routedV2.get(w.id) : undefined}
           />
         );
       })}
