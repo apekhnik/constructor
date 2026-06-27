@@ -120,6 +120,10 @@ export interface Wire {
   // Y-track per wire within a safe band). Absent on legacy wires loaded from
   // older saved schemes — those keep the old shared-channel manhattanPath.
   routed?: boolean;
+  // Spike: wires created while the JointJS adapter (src/wiring/jointjs) is
+  // enabled. Takes precedence over `routed` — points come from the adapter,
+  // not from routedPath/manhattanPath.
+  routed_v2?: true;
 }
 
 export interface Scheme {
@@ -131,6 +135,9 @@ export interface Scheme {
   pendingFrom: Endpoint | null;
   source: SourceState;
   visibility: PanelVisibility;
+  // Spike (dev-only): when true, newly created wires are flagged with
+  // `routed_v2`, asking the JointJS adapter to compute their route.
+  newRouterEnabled?: boolean;
 }
 
 function gridSourceFixture(): PlacedModule {
@@ -187,6 +194,7 @@ export const emptyScheme = (mode: PanelMode = DEFAULT_PANEL_MODE): Scheme => ({
   pendingFrom: null,
   source: defaultSource(),
   visibility: defaultVisibility(),
+  newRouterEnabled: false,
 });
 
 const RAIL_PLACEABLE: ReadonlySet<ComponentKind> = new Set([
@@ -407,6 +415,7 @@ export type SchemeAction =
   | { type: "set_trip"; id: string; reason: TripReason }
   | { type: "set_panel_mode"; mode: PanelMode }
   | { type: "set_visibility"; patch: Partial<PanelVisibility> }
+  | { type: "set_new_router"; enabled: boolean }
   | { type: "load"; scheme: Scheme }
   | { type: "clear" };
 
@@ -647,6 +656,7 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
         from: action.from,
         to: action.to,
         routed: true,
+        ...(scheme.newRouterEnabled ? { routed_v2: true as const } : {}),
       };
       return {
         ...scheme,
@@ -722,6 +732,9 @@ export function schemeReducer(scheme: Scheme, action: SchemeAction): Scheme {
             : scheme.selectedWireId,
         pendingFrom: null,
       };
+    }
+    case "set_new_router": {
+      return { ...scheme, newRouterEnabled: action.enabled };
     }
     case "clear": {
       return emptyScheme(scheme.panelMode);

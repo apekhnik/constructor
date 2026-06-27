@@ -70,6 +70,25 @@ export function SchemeSettingsPanel() {
           checked={v.inverter}
           onChange={() => apply({ inverter: !v.inverter })}
         />
+        {import.meta.env.DEV && (
+          <label
+            className="mt-[0.3rem] flex items-center gap-[0.55rem] border-t border-bp-line pt-[0.55rem] font-mono text-[0.7rem] text-bp-textDim"
+            title="Спайк: новые провода прокладываются JointJS manhattan-роутером. Не влияет на уже созданные."
+          >
+            <input
+              type="checkbox"
+              checked={!!scheme.newRouterEnabled}
+              onChange={() =>
+                dispatch({
+                  type: "set_new_router",
+                  enabled: !scheme.newRouterEnabled,
+                })
+              }
+              className="h-[0.9rem] w-[0.9rem] accent-bp-warn"
+            />
+            Новый роутер (JointJS)
+          </label>
+        )}
       </div>
     </section>
   );

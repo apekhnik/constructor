@@ -28,6 +28,7 @@ interface SerializedScheme {
   wires: Wire[];
   source: SourceState;
   visibility?: PanelVisibility;
+  newRouterEnabled?: boolean;
 }
 
 function isObject(x: unknown): x is Record<string, unknown> {
@@ -55,6 +56,7 @@ export function serializeScheme(scheme: Scheme): SerializedScheme {
     wires: scheme.wires,
     source: scheme.source,
     visibility: scheme.visibility,
+    newRouterEnabled: scheme.newRouterEnabled,
   };
 }
 
@@ -79,6 +81,7 @@ export function deserializeScheme(data: SerializedScheme): Scheme {
     wires: data.wires,
     source: { ...defaultSource(), ...data.source },
     visibility: { ...defaultVisibility(), ...data.visibility },
+    newRouterEnabled: data.newRouterEnabled ?? false,
     selectedId: null,
     selectedWireId: null,
     pendingFrom: null,
